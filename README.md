@@ -161,6 +161,23 @@ Pressing `Ctrl+S` in the TUI (or completing a benchmark run) serializes the acti
 ### Prerequisites
 * **Rust Toolchain:** `1.85+` (supports Rust `2024` edition; verified on `rustc 1.97.0`).
 
+### One-Click Windows Launcher (`start_apus.bat`)
+
+On Windows, you can launch APUS directly via [`start_apus.bat`](./start_apus.bat) (double-click in Explorer or run from PowerShell/CMD). It automatically compiles `target\release\apus.exe` if missing, runs the First-Launch OOBE Hardware Wizard if `apus.toml` is absent, and presents an interactive menu or accepts direct CLI subcommands:
+
+```powershell
+# Interactive launcher menu:
+.\start_apus.bat
+
+# Run the complete 7-stage end-to-end diagnostic & benchmark suite:
+.\start_apus.bat --test
+
+# Direct shortcuts:
+.\start_apus.bat tui
+.\start_apus.bat serve 8080
+.\start_apus.bat profiles
+```
+
 ### 1. Clone & Run the Test Suite
 
 ```bash
