@@ -1,8 +1,10 @@
+pub mod audit;
 pub mod converter;
 pub mod format;
 pub mod imatrix;
 pub mod safetensors;
 
+pub use audit::{QuantizationAuditReport, QuantizationQualityAuditor};
 pub use converter::{align_to_page, pad_file_to, ApusConverter, ConverterError, SourceExpert};
 pub use format::{
     ApusFileHeader, FormatError, LbaExpertEntry, RoostSessionHeader, RoostSnapshot, APUS_MAGIC,

@@ -181,6 +181,81 @@ pub fn balance_cluster_layers(nodes: &[ClusterNodeSpec], total_layers: u16) -> V
     assignments
 }
 
+/// Server-grade Expert Parallelism (EP) & Dynamic Replication Coordinator (Sprint 22).
+/// Tracks per-expert activation frequency across 4x–8x GPU rigs and automatically clones
+/// overloaded ("hot") experts onto underutilized GPUs to eliminate Load Imbalance.
+pub struct ExpertParallelReplicator {
+    num_gpus: usize,
+    hot_threshold: u64,
+    activation_counts: Mutex< std::collections::HashMap<ExpertId, u64> >,
+    replicas: Mutex< std::collections::HashMap<ExpertId, Vec<usize>> >,
+    gpu_load: Mutex<Vec<u64>>,
+}
+
+impl ExpertParallelReplicator {
+    pub fn new(num_gpus: usize, hot_threshold: u64) -> Self {
+        let gpus = num_gpus.max(1);
+        Self {
+            num_gpus: gpus,
+            hot_threshold: hot_threshold.max(2),
+            activation_counts: Mutex::new(std::collections::HashMap::new()),
+            replicas: Mutex::new(std::collections::HashMap::new()),
+            gpu_load: Mutex::new(vec![0; gpus]),
+        }
+    }
+
+    /// Primary home GPU for an expert determined by deterministic modulo sharding
+    #[inline]
+    pub fn primary_gpu(&self, id: ExpertId) -> usize {
+        ((id.layer as usize) * 288 + (id.expert as usize)) % self.num_gpus
+    }
+
+    /// Routes a token to the least-loaded GPU holding a replica of `id`.
+    /// When an expert's activation count exceeds `hot_threshold`, dynamically replicates it onto the most idle GPU.
+    pub fn route_and_maybe_replicate(&self, id: ExpertId) -> (usize, bool) {
+        let mut counts = self.activation_counts.lock();
+        let mut reps = self.replicas.lock();
+        let mut loads = self.gpu_load.lock();
+
+        let count = counts.entry(id).or_insert(0);
+        *count += 1;
+
+        let gpu_list = reps.entry(id).or_insert_with(|| vec![self.primary_gpu(id)]);
+        let mut replicated_now = false;
+
+        if *count >= self.hot_threshold && gpu_list.len() < self.num_gpus {
+            // Find the least loaded GPU that does not yet host a replica of this hot expert
+            if let Some((idle_gpu, _)) = loads
+                .iter()
+                .enumerate()
+                .filter(|(g, _)| !gpu_list.contains(g))
+                .min_by_key(|&(_, &l)| l)
+            {
+                gpu_list.push(idle_gpu);
+                replicated_now = true;
+            }
+        }
+
+        // Dispatch token to the least loaded GPU among all available replicas for this expert
+        let chosen_gpu = gpu_list
+            .iter()
+            .copied()
+            .min_by_key(|&g| loads[g])
+            .unwrap_or_else(|| self.primary_gpu(id));
+
+        loads[chosen_gpu] += 1;
+        (chosen_gpu, replicated_now)
+    }
+
+    pub fn replica_gpus(&self, id: ExpertId) -> Vec<usize> {
+        self.replicas
+            .lock()
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| vec![self.primary_gpu(id)])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +295,21 @@ mod tests {
 
         let next = sched.schedule_next_ready().unwrap();
         assert_eq!(next.ticket_id, 2);
+    }
+
+    #[test]
+    fn test_expert_parallel_dynamic_replication() {
+        let ep = ExpertParallelReplicator::new(4, 3);
+        let hot_exp = ExpertId {
+            layer: 5,
+            expert: 42,
+        };
+        assert_eq!(ep.replica_gpus(hot_exp).len(), 1);
+
+        let _ = ep.route_and_maybe_replicate(hot_exp);
+        let _ = ep.route_and_maybe_replicate(hot_exp);
+        let (_gpu, replicated) = ep.route_and_maybe_replicate(hot_exp);
+        assert!(replicated, "Hot expert should be dynamically cloned on 3rd hit");
+        assert!(ep.replica_gpus(hot_exp).len() >= 2);
     }
 }

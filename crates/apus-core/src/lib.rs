@@ -1,9 +1,11 @@
 pub mod cache;
 pub mod config;
+pub mod grammar;
 pub mod mla;
 pub mod mtp;
 pub mod sampler;
 pub mod slab;
+pub mod topo;
 
 use std::alloc::{alloc, dealloc, Layout};
 use std::ptr::NonNull;
@@ -11,10 +13,12 @@ use thiserror::Error;
 
 pub use cache::{ArcCache, ArcTelemetry, CacheTier};
 pub use config::ApusConfig;
+pub use grammar::{GrammarConstraintEngine, GrammarMode};
 pub use mla::{LatentKvToken, MlaKvCache, KV_PAGE_TOKENS, MLA_LATENT_DIM};
 pub use mtp::{LookAheadPrefetcher, MoERouter, MtpSpeculativeEngine, RoutedExpertSelection};
 pub use sampler::{BpeTokenizer, GenerationSampler, SamplerConfig};
 pub use slab::SlabArena;
+pub use topo::{HardwareTopologyProfile, HardwareTopologyScanner, PcieLinkTopology};
 
 #[cfg(windows)]
 #[link(name = "kernel32")]

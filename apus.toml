@@ -1,12 +1,8 @@
-# APUS: Asynchronous Paged Ultra-Streaming MoE Engine
-# Runtime Configuration Profile & OS Drive Quality-of-Service (QoS)
-# Engineered by mjojo
-
 [engine]
 author = "mjojo"
 model_path = "glm-5.2-744b-q4.apus"
 session_roost_path = "coding_rust.roost"
-storage_backend = "block" # "block" (4K O_DIRECT/IOCP) | "mmap" | "kv"
+storage_backend = "block"
 quant_format = "int4_imatrix"
 
 [model]
@@ -21,26 +17,22 @@ mla_latent_dim = 576
 mtp_heads = 2
 
 [memory]
-# L1 VRAM cache (asymmetric pool for hot routed experts & resident dense layers)
 vram_total_gb = 16.0
 vram_dense_reserved_gb = 10.0
-vram_l1_cache_gb = 4.2
-# L2 Pinned Slab RAM (4096-byte page-aligned slots locked via VirtualLock / mlock)
+vram_l1_cache_gb = 4.199999809265137
 ram_slab_gb = 24.0
-expert_slot_size_bytes = 19922944 # ~19 MB (4096-byte aligned)
+expert_slot_size_bytes = 19922944
 lock_pages_in_ram = true
 
 [qos]
-# System NVMe Drive Protection (OS Drive Mode)
 os_drive_mode = true
-io_priority = "idle" # "idle" (IOPRIO_CLASS_IDLE / IoPriorityHintVeryLow) | "normal" | "high"
+io_priority = "idle"
 max_bandwidth_gbs = 5.5
 max_nvme_potential_gbs = 7.0
 max_queue_depth = 32
 sata_ahci_compat = false
 
 [thermal]
-# S.M.A.R.T. PID Thermal Controller for NVMe SSDs
 enabled = true
 target_temp_c = 60
 yellow_zone_temp_c = 65
@@ -48,7 +40,6 @@ red_zone_temp_c = 70
 poll_interval_ms = 500
 
 [topology]
-# Multi-GPU Pipeline Parallelism (2x 8GB GPUs) & NUMA affinity
 num_gpus = 2
 pipeline_split_layer = 37
 enable_p2p_dma = true

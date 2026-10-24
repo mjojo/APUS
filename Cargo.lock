@@ -68,6 +68,8 @@ dependencies = [
  "blake3",
  "memmap2",
  "parking_lot",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tracing",

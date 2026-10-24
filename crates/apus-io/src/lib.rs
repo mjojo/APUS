@@ -1,3 +1,4 @@
+pub mod hub;
 pub mod qos;
 pub mod thermal;
 
@@ -10,6 +11,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+pub use hub::{ApusIdxManifest, ChunkedHubDownloader, HubChunkDescriptor};
 pub use qos::{IoPriorityClass, OsDriveQosController, QosMetrics};
 pub use thermal::{SmartThermalController, ThermalZone};
 

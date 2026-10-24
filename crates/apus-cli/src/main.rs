@@ -2,13 +2,17 @@ mod server;
 
 use apus_backends::{ApusComputeEngine, ComputeAccelerator};
 use apus_core::{
-    ApusConfig, ArcCache, CacheTier, ComputeBackend, ExpertStorage, LookAheadPrefetcher,
-    MlaKvCache, MoERouter, MtpSpeculativeEngine, SlabArena, MLA_LATENT_DIM,
+    ApusConfig, ArcCache, CacheTier, ComputeBackend, ExpertStorage, HardwareTopologyScanner,
+    LookAheadPrefetcher, MlaKvCache, MoERouter, MtpSpeculativeEngine, SlabArena, MLA_LATENT_DIM,
 };
-use apus_io::{ApusBlockStorage, IoPriorityClass, OsDriveQosController, SmartThermalController};
+use apus_io::{
+    ApusBlockStorage, ChunkedHubDownloader, IoPriorityClass, OsDriveQosController,
+    SmartThermalController,
+};
 use apus_net::DualGpuPipeline;
 use apus_quant::{
-    ApusConverter, ApusFileHeader, ImatrixCalibrator, QuantizerInt4, RoostSnapshot, SourceExpert,
+    ApusConverter, ApusFileHeader, ImatrixCalibrator, QuantizationQualityAuditor, QuantizerInt4,
+    RoostSnapshot, SourceExpert,
 };
 use apus_tui::{render_dashboard, run_boot_splash, DashboardState};
 use crossterm::{
@@ -66,6 +70,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cfg_path = args.get(2).map(|s| s.as_str()).unwrap_or("apus.toml");
             cmd_wizard(cfg_path)?;
         }
+        "audit" => {
+            cmd_audit()?;
+        }
+        "manifest" | "pull" => {
+            let path = args
+                .get(2)
+                .map(|s| s.as_str())
+                .unwrap_or("glm-5.2-744b-q4.apus");
+            cmd_manifest_and_verify(path)?;
+        }
         "serve" => {
             let port: u16 = args
                 .get(2)
@@ -91,12 +105,14 @@ fn print_banner() {
     println!("│  █▀█ █▀▀ █▄█ ▄█   744B MoE SSD Inference Runtime ── engineered by mjojo      │");
     println!("├──────────────────────────────────────────────────────────────────────────────┤");
     println!("│  CLI Commands:                                                               │");
-    println!("│    apus convert [out.apus] [layers] [experts]  Pack weights into 4K .apus    │");
-    println!("│    apus inspect [file.apus]                    Verify header, LBA & BLAKE3   │");
-    println!("│    apus bench   [file.apus]                    Full SSD streaming benchmark  │");
-    println!("│    apus wizard  [apus.toml]                    Hardware & Disk QoS auto-tuner│");
-    println!("│    apus run     [--headless]                   Launch 60 FPS Telemetry TUI   │");
-    println!("│    apus serve   [port]                         Start OpenAI HTTP API (axum)  │");
+    println!("│    apus convert  [out.apus] [layers] [experts] Pack weights into 4K .apus    │");
+    println!("│    apus inspect  [file.apus]                   Verify header, LBA & BLAKE3   │");
+    println!("│    apus bench    [file.apus]                   Full SSD streaming benchmark  │");
+    println!("│    apus audit                                  SQNR/Perplexity quant audit   │");
+    println!("│    apus manifest [file.apus]                   Build/verify .apus.idx chunks │");
+    println!("│    apus wizard   [apus.toml]                   Hardware & Disk QoS auto-tuner│");
+    println!("│    apus run      [--headless]                  Launch 60 FPS Telemetry TUI   │");
+    println!("│    apus serve    [port]                        Start OpenAI HTTP API (axum)  │");
     println!("╰──────────────────────────────────────────────────────────────────────────────╯");
 }
 
@@ -315,14 +331,60 @@ async fn cmd_bench(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn cmd_wizard(cfg_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let accel = ComputeAccelerator::detect_host_cpu();
+    let topo = HardwareTopologyScanner::probe_host();
+    let pinned_core0 = HardwareTopologyScanner::pin_current_thread_to_core(0);
     println!("[APUS Auto-Tuner Wizard // by mjojo]");
     println!(" ▸ Detected SIMD / Compute Profile : {}", accel.label());
+    println!(
+        " ▸ Host CPU / NUMA Topology        : {} cores, {} NUMA node(s), {} CCD(s) (Core0 Pin: {})",
+        topo.logical_cores, topo.estimated_numa_nodes, topo.ccd_chiplets, pinned_core0
+    );
     println!(" ▸ DMA Page Alignment              : 4096 bytes (O_DIRECT / IOCP)");
     println!(" ▸ System NVMe QoS Protection      : ENABLED (IDLE I/O + 5.5 GB/s Cap + PID 65°C)");
 
     let config = ApusConfig::default();
     config.save_to_file(cfg_path)?;
     println!(" ▸ Configuration written to        : {}", cfg_path);
+    Ok(())
+}
+
+fn cmd_audit() -> Result<(), Box<dyn std::error::Error>> {
+    let reference: Vec<f32> = (0..4096)
+        .map(|i| ((i as f32 * 0.037).sin() * 1.2) + ((i as f32 * 0.11).cos() * 0.4))
+        .collect();
+    let imatrix = ImatrixCalibrator::uniform(reference.len());
+    let (rep4, rep2) = QuantizationQualityAuditor::audit_int4_and_int2(&reference, Some(&imatrix));
+
+    println!("╭─── APUS Quantization Quality Audit (by mjojo) ─────────────────────╮");
+    for r in [&rep4, &rep2] {
+        println!(
+            "│ {:<18} │ SQNR: {:>5.2} dB │ Cosine: {:.4} │ ΔPPL: +{:.3} │ Gate: {}",
+            r.format_name,
+            r.sqnr_db,
+            r.cosine_similarity,
+            r.estimated_perplexity_delta,
+            if r.passed_quality_gate { "PASS" } else { "WARN" }
+        );
+    }
+    println!("╰────────────────────────────────────────────────────────────────────╯");
+    Ok(())
+}
+
+fn cmd_manifest_and_verify(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !Path::new(path).exists() {
+        cmd_convert(path, 4, 8)?;
+    }
+    let idx_path = format!("{path}.idx");
+    let manifest = ChunkedHubDownloader::generate_manifest_from_container(path)?;
+    manifest.save_to_file(&idx_path)?;
+    let missing = ChunkedHubDownloader::find_missing_or_corrupted_chunks(path, &manifest);
+    println!(
+        "[APUS Hub // by mjojo] Manifest '{}' generated ({} chunks, Root BLAKE3: 0x{}). Missing/Corrupted chunks: {}",
+        idx_path,
+        manifest.chunks.len(),
+        &manifest.root_blake3_hex[..16],
+        missing.len()
+    );
     Ok(())
 }
 
