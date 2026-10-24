@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Sampling parameters for token generation (Temperature, Top-K, Top-P, Min-P, Repetition Penalty)
+/// Sampling parameters for token generation (Temperature, Top-K, Top-P, Min-P, Repetition & DRY Penalty)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SamplerConfig {
     pub temperature: f32,
@@ -9,6 +9,10 @@ pub struct SamplerConfig {
     pub top_p: f32,
     pub min_p: f32,
     pub repetition_penalty: f32,
+    /// DRY (Don't Repeat Yourself) n-gram sequence penalty multiplier (Sprint 25)
+    pub dry_multiplier: f32,
+    pub dry_base: f32,
+    pub dry_allowed_length: usize,
 }
 
 impl Default for SamplerConfig {
@@ -19,6 +23,9 @@ impl Default for SamplerConfig {
             top_p: 0.90,
             min_p: 0.05,
             repetition_penalty: 1.12,
+            dry_multiplier: 0.8,
+            dry_base: 1.75,
+            dry_allowed_length: 2,
         }
     }
 }
@@ -72,6 +79,36 @@ impl GenerationSampler {
                         *score /= self.config.repetition_penalty;
                     } else {
                         *score *= self.config.repetition_penalty;
+                    }
+                }
+            }
+        }
+
+        // 1b. Apply DRY (Don't Repeat Yourself) n-gram suffix sequence penalty (Sprint 25):
+        // Scans context history for suffixes matching the tail of `context_tokens` and exponentially
+        // penalizes the token that immediately followed that suffix in earlier positions.
+        if self.config.dry_multiplier > 0.0 && context_tokens.len() >= 2 {
+            let tail_tok = *context_tokens.last().unwrap();
+            let n = context_tokens.len();
+            for end_idx in 1..(n - 1) {
+                if context_tokens[end_idx - 1] == tail_tok {
+                    // Measure contiguous matching suffix length backwards
+                    let mut match_len = 1usize;
+                    while match_len < end_idx
+                        && match_len < n - 1
+                        && context_tokens[end_idx - 1 - match_len]
+                            == context_tokens[n - 1 - match_len]
+                    {
+                        match_len += 1;
+                    }
+                    if match_len >= self.config.dry_allowed_length {
+                        let next_repeated_tok = context_tokens[end_idx] as usize;
+                        if let Some((_, score)) = candidates.get_mut(next_repeated_tok) {
+                            let exp_pow = (match_len - self.config.dry_allowed_length) as i32;
+                            let penalty =
+                                self.config.dry_multiplier * self.config.dry_base.powi(exp_pow);
+                            *score -= penalty;
+                        }
                     }
                 }
             }

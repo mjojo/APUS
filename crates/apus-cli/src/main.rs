@@ -613,7 +613,7 @@ async fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
         dash.apply_runtime_response(
             gen_res.reply_text,
             gen_res.tok_per_sec,
-            gen_res.arc_telemetry.hit_rate_percent(),
+            gen_res.arc_telemetry,
             gen_res.context_tokens_total,
             gen_res.nvme_temp_c,
         );
@@ -642,14 +642,40 @@ async fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    // Sprint 27: Decouple the 60 FPS TUI render loop from the background inference worker via `tokio::sync::mpsc` channels
+    let (prompt_tx, mut prompt_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (result_tx, mut result_rx) =
+        tokio::sync::mpsc::unbounded_channel::<runtime::RuntimeGenerationResult>();
+
+    let worker_runtime = Arc::clone(&runtime);
+    tokio::spawn(async move {
+        while let Some(user_prompt) = prompt_rx.recv().await {
+            if let Ok(gen_res) = worker_runtime.generate_response(&user_prompt, 4).await {
+                let _ = result_tx.send(gen_res);
+            }
+        }
+    });
+
     let res = async {
         run_boot_splash(&mut terminal)?;
 
         let mut dash = DashboardState::default();
-        let tick_rate = Duration::from_millis(50);
+        let tick_rate = Duration::from_millis(16); // Non-blocking 60 FPS UI loop
         let mut last_tick = Instant::now();
 
         loop {
+            // Drain completed background inference telemetry without blocking the 60 FPS UI thread
+            while let Ok(gen_res) = result_rx.try_recv() {
+                dash.record_routed_experts(&gen_res.routed_expert_indices);
+                dash.apply_runtime_response(
+                    gen_res.reply_text,
+                    gen_res.tok_per_sec,
+                    gen_res.arc_telemetry,
+                    gen_res.context_tokens_total,
+                    gen_res.nvme_temp_c,
+                );
+            }
+
             terminal
                 .draw(|f| render_dashboard(f, &dash))
                 .map_err(|e| io::Error::other(e.to_string()))?;
@@ -694,16 +720,7 @@ async fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
                         if !user_prompt.is_empty() {
                             dash.submit_prompt();
                             dash.chat_scroll_offset = 0;
-                            if let Ok(gen_res) = runtime.generate_response(&user_prompt, 4).await {
-                                dash.record_routed_experts(&gen_res.routed_expert_indices);
-                                dash.apply_runtime_response(
-                                    gen_res.reply_text,
-                                    gen_res.tok_per_sec,
-                                    gen_res.arc_telemetry.hit_rate_percent(),
-                                    gen_res.context_tokens_total,
-                                    gen_res.nvme_temp_c,
-                                );
-                            }
+                            let _ = prompt_tx.send(user_prompt);
                         }
                     }
                     KeyCode::Backspace => {

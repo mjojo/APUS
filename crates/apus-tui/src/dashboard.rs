@@ -38,6 +38,10 @@ pub struct DashboardState {
     pub chat_scroll_offset: u16,
     /// Active focused panel index (0 = Session Chat, 1 = ARC Memory, 2 = NVMe I/O, 3 = Braille Heatmap, 4 = Ticket Queue)
     pub active_panel_index: u8,
+    /// Triple cache hit breakdown (Sprint 27): L1 VRAM Hit %, L2 RAM Hit %, SSD Miss %
+    pub l1_hit_pct: f32,
+    pub l2_hit_pct: f32,
+    pub ssd_miss_pct: f32,
 }
 
 impl Default for DashboardState {
@@ -89,6 +93,9 @@ impl Default for DashboardState {
             ],
             chat_scroll_offset: 0,
             active_panel_index: 0,
+            l1_hit_pct: 58.4,
+            l2_hit_pct: 33.4,
+            ssd_miss_pct: 8.2,
         }
     }
 }
@@ -140,12 +147,15 @@ impl DashboardState {
         &mut self,
         reply_text: String,
         tok_per_sec: f32,
-        hit_rate_pct: f32,
+        arc_telemetry: apus_core::ArcTelemetry,
         context_tokens_total: usize,
         nvme_temp_c: u8,
     ) {
         self.header.tok_per_sec = tok_per_sec;
-        self.header.hit_rate = hit_rate_pct;
+        self.header.hit_rate = arc_telemetry.hit_rate_percent();
+        self.l1_hit_pct = arc_telemetry.l1_hit_percent();
+        self.l2_hit_pct = arc_telemetry.l2_hit_percent();
+        self.ssd_miss_pct = arc_telemetry.ssd_miss_percent();
         self.header.nvme_temp_c = nvme_temp_c;
         self.context_tokens_k = 48.2 + (context_tokens_total as f32 / 1000.0);
         self.pending_stream_tokens = reply_text
@@ -322,11 +332,28 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, state: &DashboardState) {
                 .fg(sender_color)
                 .add_modifier(Modifier::BOLD),
         )));
+        let mut in_code_block = false;
         for row in text.lines() {
-            lines.push(Line::from(Span::styled(
-                format!(" {}", row),
-                Style::default().fg(Color::Rgb(226, 232, 240)),
-            )));
+            if row.trim_start().starts_with("```") {
+                in_code_block = !in_code_block;
+                lines.push(Line::from(Span::styled(
+                    format!(" {}", row),
+                    Style::default().fg(INDIGO_GLOW),
+                )));
+                continue;
+            }
+            if in_code_block
+                || row.trim_start().starts_with("pub ")
+                || row.trim_start().starts_with("fn ")
+                || row.trim_start().starts_with("let ")
+                || row.contains("UnsafeCell")
+                || row.contains("CachePadded")
+                || row.trim() == "}"
+            {
+                lines.push(highlight_rust_code_line(row));
+            } else {
+                lines.push(highlight_markdown_inline(row));
+            }
         }
         lines.push(Line::from(""));
     }
@@ -406,18 +433,65 @@ fn render_arc_hierarchy(frame: &mut Frame, area: Rect, state: &DashboardState) {
             ),
         ]),
         Line::from(vec![
-            Span::styled(" Hit Ratio: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(" L1/L2/Miss: ", Style::default().fg(TEXT_MUTED)),
             Span::styled(
-                format!("{:.1}%", state.header.hit_rate),
+                format!("L1 {:.0}% ", state.l1_hit_pct),
                 Style::default().fg(EMERALD_OK).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!(" ── Miss Penalty: {:.1} ms", state.miss_penalty_ms),
-                Style::default().fg(TEXT_MUTED),
+                format!("│ L2 {:.0}% ", state.l2_hit_pct),
+                Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    "│ Miss {:.0}% ({:.1}ms)",
+                    state.ssd_miss_pct, state.miss_penalty_ms
+                ),
+                Style::default().fg(GOLD_BADGE),
             ),
         ]),
     ];
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// On-the-fly Truecolor Rust syntax highlighter for code blocks in the TUI chat (Sprint 27)
+fn highlight_rust_code_line(row: &str) -> Line<'static> {
+    let mut spans = vec![Span::raw(" ")];
+    for token in row.split_inclusive(|c: char| c.is_whitespace() || ":{};,<>[]()".contains(c)) {
+        let trimmed = token.trim_matches(|c: char| c.is_whitespace() || ":{};,<>[]()".contains(c));
+        let color = match trimmed {
+            "pub" | "struct" | "fn" | "impl" | "const" | "let" | "mut" | "async" | "await"
+            | "unsafe" => INDIGO_GLOW,
+            "usize" | "u8" | "u16" | "u32" | "u64" | "f32" | "IoRingQueue" | "UnsafeCell"
+            | "MaybeUninit" | "CachePadded" | "AtomicUsize" => CYAN_NEON,
+            _ if token.contains('"') => GOLD_BADGE,
+            _ => Color::Rgb(203, 213, 225),
+        };
+        spans.push(Span::styled(token.to_string(), Style::default().fg(color)));
+    }
+    Line::from(spans)
+}
+
+/// Inline Markdown span highlighter (`backtick code` and `[badges]`) for chat prose
+fn highlight_markdown_inline(row: &str) -> Line<'static> {
+    let mut spans = vec![Span::raw(" ")];
+    for (idx, part) in row.split('`').enumerate() {
+        if idx % 2 == 1 {
+            spans.push(Span::styled(
+                format!("`{part}`"),
+                Style::default()
+                    .fg(CYAN_NEON)
+                    .bg(Color::Rgb(24, 30, 46))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled(
+                part.to_string(),
+                Style::default().fg(Color::Rgb(226, 232, 240)),
+            ));
+        }
+    }
+    Line::from(spans)
 }
 
 fn render_nvme_smart(frame: &mut Frame, area: Rect, state: &DashboardState) {
