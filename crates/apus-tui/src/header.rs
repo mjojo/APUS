@@ -88,9 +88,9 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TelemetryHeaderState
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(28),
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
+            Constraint::Length(31),
+            Constraint::Percentage(46),
+            Constraint::Percentage(54),
         ])
         .split(inner_area);
 

@@ -118,6 +118,22 @@ impl DashboardState {
     }
 }
 
+/// Converts a `ratatui::buffer::Buffer` into a printable multi-line UTF-8 string
+/// for headless terminal inspection and automated E2E TUI testing.
+pub fn buffer_to_plain_text(buf: &ratatui::buffer::Buffer) -> String {
+    let area = buf.area;
+    let mut out = String::with_capacity((area.width as usize + 1) * area.height as usize);
+    for y in 0..area.height {
+        let mut line = String::with_capacity(area.width as usize);
+        for x in 0..area.width {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
 /// Renders the fullscreen APUS Telemetry HUD
 pub fn render_dashboard(frame: &mut Frame, state: &DashboardState) {
     let area = frame.area();
@@ -245,7 +261,21 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, state: &DashboardState) {
         ),
     ]));
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    let inner_width = inner.width.max(20) as usize;
+    let mut wrapped_line_count = 0usize;
+    for line in &lines {
+        let char_len: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        wrapped_line_count += char_len.max(1).div_ceil(inner_width);
+    }
+    let visible_height = inner.height as usize;
+    let scroll_y = wrapped_line_count.saturating_sub(visible_height) as u16;
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0)),
+        inner,
+    );
 }
 
 fn render_arc_hierarchy(frame: &mut Frame, area: Rect, state: &DashboardState) {
