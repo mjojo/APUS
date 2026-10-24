@@ -1,0 +1,28 @@
+[package]
+name = "apus-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "APUS CLI & OpenAI-Compatible Server: apus run, serve, convert, inspect, bench, wizard (by mjojo)"
+
+[[bin]]
+name = "apus"
+path = "src/main.rs"
+
+[dependencies]
+apus-core.workspace = true
+apus-quant.workspace = true
+apus-io.workspace = true
+apus-backends.workspace = true
+apus-net.workspace = true
+apus-tui.workspace = true
+tokio.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+blake3.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

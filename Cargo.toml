@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/apus-core",
+    "crates/apus-quant",
+    "crates/apus-io",
+    "crates/apus-backends",
+    "crates/apus-net",
+    "crates/apus-tui",
+    "crates/apus-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["mjojo"]
+license = "Apache-2.0"
+repository = "https://github.com/mjojo/apus"
+description = "APUS: Asynchronous Paged Ultra-Streaming Engine for 700B+ MoE LLMs (by mjojo)"
+
+[workspace.dependencies]
+# Async runtime & lock-free concurrency primitives
+tokio = { version = "1.40", features = ["full"] }
+crossbeam = "0.8"
+parking_lot = "0.12"
+
+# Diagnostics, profiling (Tracy) & error handling
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2.0"
+
+# Cryptographic hashing & configuration serialization
+blake3 = "1.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Terminal UI & OpenAI-compatible HTTP server
+ratatui = "0.29"
+crossterm = "0.28"
+axum = "0.8"
+
+# Internal workspace crates
+apus-core = { path = "crates/apus-core" }
+apus-quant = { path = "crates/apus-quant" }
+apus-io = { path = "crates/apus-io" }
+apus-backends = { path = "crates/apus-backends" }
+apus-net = { path = "crates/apus-net" }
+apus-tui = { path = "crates/apus-tui" }

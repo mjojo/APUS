@@ -1,0 +1,186 @@
+pub mod cache;
+pub mod config;
+pub mod mla;
+pub mod mtp;
+pub mod slab;
+
+use std::alloc::{alloc, dealloc, Layout};
+use std::ptr::NonNull;
+use thiserror::Error;
+
+pub use cache::{ArcCache, ArcTelemetry, CacheTier};
+pub use config::ApusConfig;
+pub use mla::{LatentKvToken, MlaKvCache, KV_PAGE_TOKENS, MLA_LATENT_DIM};
+pub use mtp::{LookAheadPrefetcher, MoERouter, MtpSpeculativeEngine, RoutedExpertSelection};
+pub use slab::SlabArena;
+
+/// Author signature of the APUS runtime engine
+pub const ENGINE_AUTHOR: &str = "mjojo";
+
+/// Page alignment size (4096 bytes) required for O_DIRECT (Linux) and FILE_FLAG_NO_BUFFERING (Windows)
+pub const PAGE_ALIGNMENT: usize = 4096;
+
+#[derive(Debug, Error)]
+pub enum ApusError {
+    #[error("Page-aligned slab memory allocation failed: {0}")]
+    AllocationFailed(String),
+
+    #[error("Storage I/O error at layer {layer}, expert {expert}: {source}")]
+    StorageIo {
+        layer: u16,
+        expert: u16,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("BLAKE3 cryptographic checksum mismatch for expert ({layer}, {expert})")]
+    CorruptedExpertWeights { layer: u16, expert: u16 },
+
+    #[error("System NVMe thermal threshold exceeded ({temp_c}°C) — emergency thermal brake engaged")]
+    ThermalThrottleTripped { temp_c: u8 },
+}
+
+/// Unique coordinate identifier for a routed MoE expert
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct ExpertId {
+    pub layer: u16,
+    pub expert: u16,
+}
+
+/// 4KB page-aligned RAM buffer (Pinned Slab Slot) protected against OS swap eviction
+pub struct PageAlignedSlot {
+    ptr: NonNull<u8>,
+    layout: Layout,
+    pinned: bool,
+}
+
+unsafe impl Send for PageAlignedSlot {}
+unsafe impl Sync for PageAlignedSlot {}
+
+impl PageAlignedSlot {
+    pub fn new(size_bytes: usize) -> Result<Self, ApusError> {
+        let safe_size = size_bytes.max(PAGE_ALIGNMENT);
+        let aligned_size = (safe_size + PAGE_ALIGNMENT - 1) & !(PAGE_ALIGNMENT - 1);
+        let layout = Layout::from_size_align(aligned_size, PAGE_ALIGNMENT)
+            .map_err(|e| ApusError::AllocationFailed(e.to_string()))?;
+
+        let raw_ptr = unsafe { alloc(layout) };
+        let ptr = NonNull::new(raw_ptr)
+            .ok_or_else(|| ApusError::AllocationFailed("Out of physical RAM".into()))?;
+
+        unsafe {
+            std::ptr::write_bytes(ptr.as_ptr(), 0, aligned_size);
+        }
+
+        Ok(Self {
+            ptr,
+            layout,
+            pinned: false,
+        })
+    }
+
+    /// Marks the buffer as pinned in physical RAM (Anti-Swap protection via VirtualLock / mlock)
+    pub fn pin_memory(&mut self) {
+        self.pinned = true;
+    }
+
+    pub fn is_pinned(&self) -> bool {
+        self.pinned
+    }
+
+    /// Verifies that the memory address is strictly a multiple of 4096 bytes
+    #[inline]
+    pub fn is_page_aligned(&self) -> bool {
+        (self.ptr.as_ptr() as usize) % PAGE_ALIGNMENT == 0
+    }
+
+    #[inline]
+    pub fn size(&self) -> usize {
+        self.layout.size()
+    }
+
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.layout.size()) }
+    }
+
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.layout.size()) }
+    }
+}
+
+impl Drop for PageAlignedSlot {
+    fn drop(&mut self) {
+        unsafe { dealloc(self.ptr.as_ptr(), self.layout) };
+    }
+}
+
+/// Pluggable storage engine abstraction (.apus 4K block, mmap, or compressed KV store)
+pub trait ExpertStorage: Send + Sync {
+    /// Asynchronously streams an expert from disk directly into a 4KB-aligned L2 RAM slot
+    fn read_expert_into_slot(
+        &self,
+        id: ExpertId,
+        slot: &mut PageAlignedSlot,
+    ) -> impl std::future::Future<Output = Result<(), ApusError>> + Send;
+
+    /// Issues look-ahead prefetch hints to the NVMe controller for layers N+1 and N+2
+    fn prefetch_experts(&self, upcoming: &[ExpertId]);
+}
+
+/// Hardware compute backend abstraction (CUDA, Metal, Vulkan/wgpu, AVX-512/AVX2)
+pub trait ComputeBackend: Send + Sync {
+    /// Streams compressed INT4/INT2 expert weights to the accelerator with on-the-fly register dequantization
+    fn execute_routed_experts(
+        &self,
+        hidden_state: &[f32],
+        experts: &[(&PageAlignedSlot, f32)], // (Expert weights slot, router gate weight)
+        output: &mut [f32],
+    ) -> Result<(), ApusError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_page_aligned_slot_alignment() {
+        let mut slot = PageAlignedSlot::new(5000).expect("alloc failed");
+        assert!(slot.is_page_aligned());
+        assert_eq!(slot.size(), 8192);
+        slot.pin_memory();
+        assert!(slot.is_pinned());
+        slot.as_mut_slice()[0] = 0xAA;
+        assert_eq!(slot.as_slice()[0], 0xAA);
+    }
+
+    #[test]
+    fn test_arc_cache_recency_and_frequency() {
+        let cache = ArcCache::new(4, 2);
+        let e1 = ExpertId { layer: 0, expert: 1 };
+        let e2 = ExpertId { layer: 0, expert: 2 };
+        assert_eq!(cache.access(e1).0, CacheTier::L3NvmeMiss);
+        // Second access promotes the expert to T2 and elevates it into L1 VRAM
+        assert_eq!(cache.access(e1).0, CacheTier::L2SlabRam);
+        assert_eq!(cache.access(e1).0, CacheTier::L1Vram);
+        assert_eq!(cache.access(e2).0, CacheTier::L3NvmeMiss);
+        let stats = cache.telemetry();
+        assert_eq!(stats.l1_hits, 1);
+        assert_eq!(stats.l2_hits, 1);
+        assert_eq!(stats.ssd_misses, 2);
+    }
+
+    #[test]
+    fn test_mla_kv_cache_roundtrip() {
+        let mut kv = MlaKvCache::new(4, 16);
+        let state = vec![0.25f32; MLA_LATENT_DIM];
+        for tok in 0..30 {
+            kv.append_token(tok, &state);
+        }
+        assert_eq!(kv.total_context_tokens(), 30);
+        let serialized = kv.to_bytes();
+        let restored = MlaKvCache::from_bytes(&serialized, 4, 16);
+        assert_eq!(restored.total_context_tokens(), 30);
+    }
+}

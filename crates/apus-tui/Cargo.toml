@@ -1,0 +1,13 @@
+[package]
+name = "apus-tui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "APUS Cyberpunk/Aerospace TUI Dashboard: Truecolor Splash, Braille Expert Heatmap, Sparklines & mjojo HUD"
+
+[dependencies]
+apus-core.workspace = true
+apus-quant.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true

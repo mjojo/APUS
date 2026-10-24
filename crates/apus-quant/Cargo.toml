@@ -1,0 +1,14 @@
+[package]
+name = "apus-quant"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "APUS Quant & Binary Formats: .apus & .roost headers, 4KB LBA Converter, BLAKE3 Merkle Tree & imatrix INT4/INT2 (by mjojo)"
+
+[dependencies]
+apus-core.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+tracing.workspace = true

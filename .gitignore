@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# APUS (apus-moe) — Git Ignore Rules
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Rust / Cargo build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# APUS binary model containers, LBA manifests & session snapshots
+*.apus
+*.apus.idx
+*.roost
+
+# Upstream LLM / MoE weights & quantization artifacts
+*.gguf
+*.safetensors
+*.exl2
+*.bin
+*.pt
+*.pth
+*.onnx
+*.imatrix
+/models/
+/weights/
+/snapshots/
+/cache/
+
+# Profiling, benchmarks & telemetry dumps
+*.profraw
+*.profdata
+*.tracy
+perf.data*
+flamegraph.svg
+/benches/results/
+*.log
+
+# Environment & local overrides
+.env
+.env.*
+apus.local.toml
+
+# IDEs & Editors
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

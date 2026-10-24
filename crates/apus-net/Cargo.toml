@@ -1,0 +1,13 @@
+[package]
+name = "apus-net"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "APUS Multi-GPU Pipeline Parallelism (2x 8GB VRAM), P2P DMA, I/O-Aware Continuous Batching & LAN Cluster (by mjojo)"
+
+[dependencies]
+apus-core.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+tracing.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "apus-backends"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "APUS Compute Backends: SIMD GEMV/SwiGLU Kernels & GPU-Direct INT4/INT2 Dequantization (by mjojo)"
+
+[dependencies]
+apus-core.workspace = true
+apus-quant.workspace = true
+tracing.workspace = true

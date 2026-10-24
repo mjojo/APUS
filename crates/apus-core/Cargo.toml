@@ -1,0 +1,14 @@
+[package]
+name = "apus-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "APUS Core: 4KB Page-Aligned Slab Arena, ARC L1/L2 Cache, MLA KV-Cache, MTP & MoE Graph (by mjojo)"
+
+[dependencies]
+thiserror.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+toml.workspace = true
+tracing.workspace = true
