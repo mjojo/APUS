@@ -1,13 +1,18 @@
 pub mod converter;
 pub mod format;
 pub mod imatrix;
+pub mod safetensors;
 
 pub use converter::{align_to_page, pad_file_to, ApusConverter, ConverterError, SourceExpert};
 pub use format::{
     ApusFileHeader, FormatError, LbaExpertEntry, RoostSessionHeader, RoostSnapshot, APUS_MAGIC,
     AUTHOR_SIGNATURE, ROOST_AUTHOR_SIGNATURE, ROOST_MAGIC,
 };
-pub use imatrix::{ImatrixCalibrator, QuantizerInt4, QUANT_GROUP_SIZE};
+pub use imatrix::{ImatrixCalibrator, QuantizerInt2, QuantizerInt4, QUANT_GROUP_SIZE};
+pub use safetensors::{
+    classify_moe_tensor_name, GgufHeaderSummary, MoETensorRole, SafetensorDescriptor,
+    SafetensorsMoEParser, GGUF_MAGIC,
+};
 
 #[cfg(test)]
 mod tests {
@@ -88,5 +93,43 @@ mod tests {
         for (a, b) in original.iter().zip(unpacked.iter()) {
             assert!((a - b).abs() < 0.35, "mismatch: {a} vs {b}");
         }
+    }
+
+    #[test]
+    fn test_int2_quantizer_and_safetensors_parser() {
+        let original: Vec<f32> = (0..64).map(|i| if i % 2 == 0 { 1.2 } else { -1.2 }).collect();
+        let packed2 = QuantizerInt2::quantize(&original, None);
+        let unpacked2 = QuantizerInt2::dequantize(&packed2, original.len());
+        assert_eq!(unpacked2.len(), original.len());
+        for (a, b) in original.iter().zip(unpacked2.iter()) {
+            assert_eq!(a.signum(), b.signum());
+        }
+
+        // Verify MoE tensor name classification
+        assert_eq!(
+            classify_moe_tensor_name("model.layers.0.self_attn.q_proj.weight"),
+            MoETensorRole::DenseBackbone
+        );
+        assert_eq!(
+            classify_moe_tensor_name("model.layers.3.mlp.shared_experts.gate_proj.weight"),
+            MoETensorRole::DenseBackbone
+        );
+        assert_eq!(
+            classify_moe_tensor_name("model.layers.3.mlp.experts.12.gate_proj.weight"),
+            MoETensorRole::RoutedExpert {
+                layer_id: 3,
+                expert_id: 12
+            }
+        );
+
+        // Verify GGUF binary header parser
+        let mut gguf_bytes = Vec::new();
+        gguf_bytes.extend_from_slice(GGUF_MAGIC);
+        gguf_bytes.extend_from_slice(&3u32.to_le_bytes());
+        gguf_bytes.extend_from_slice(&21504u64.to_le_bytes());
+        gguf_bytes.extend_from_slice(&42u64.to_le_bytes());
+        let summary = GgufHeaderSummary::read_from(&gguf_bytes[..]).expect("gguf parse failed");
+        assert_eq!(summary.version, 3);
+        assert_eq!(summary.tensor_count, 21504);
     }
 }

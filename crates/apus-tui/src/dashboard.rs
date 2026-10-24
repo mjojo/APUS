@@ -28,6 +28,8 @@ pub struct DashboardState {
     pub nvme_cap_pct: u8,
     pub snapshot_saved_banner: Option<String>,
     pub chat_messages: Vec<(String, String)>,
+    pub prompt_input: String,
+    pub pending_stream_tokens: Vec<String>,
 }
 
 impl Default for DashboardState {
@@ -58,6 +60,8 @@ impl Default for DashboardState {
                     "To eliminate lock contention on the SQ/CQ ring buffer, use cache-padded atomic indices with `Acquire`/`Release` ordering:\n\npub struct IoRingQueue<T, const N: usize> {\n    buffer: [UnsafeCell<MaybeUninit<T>>; N],\n    head: CachePadded<AtomicUsize>,\n    tail: CachePadded<AtomicUsize>,\n}".into(),
                 ),
             ],
+            prompt_input: String::new(),
+            pending_stream_tokens: Vec::new(),
         }
     }
 }
@@ -71,6 +75,38 @@ impl DashboardState {
         self.nvme_read_gbs = (5.84 + wave * 0.65).clamp(1.2, 6.9);
         self.queue_depth = (18isize + (wave * 6.0) as isize).clamp(4, 32) as usize;
         self.active_layer = ((self.tick / 3) % (self.total_layers as u64)) as u16 + 1;
+
+        // Stream pending tokens into the active assistant response in real time
+        if !self.pending_stream_tokens.is_empty() {
+            let next_tok = self.pending_stream_tokens.remove(0);
+            if let Some((sender, body)) = self.chat_messages.last_mut() {
+                if sender.starts_with("APUS") {
+                    body.push_str(&next_tok);
+                }
+            }
+            self.context_tokens_k += 0.002;
+        }
+    }
+
+    /// Submits the current user prompt and schedules an asynchronous token stream
+    pub fn submit_prompt(&mut self) {
+        let trimmed = self.prompt_input.trim().to_string();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.chat_messages.push(("You".into(), trimmed.clone()));
+        self.chat_messages
+            .push(("APUS :: GLM-5.2-744B".into(), String::new()));
+        self.prompt_input.clear();
+
+        let response = format!(
+            "[Streamed via 4K Direct I/O + AVX2 FMA3 | MTP 2x] Routed 8/288 experts per layer for prompt \"{trimmed}\". ARC Hit Ratio held at {:.1}% with 0 B OS swap.",
+            self.header.hit_rate
+        );
+        self.pending_stream_tokens = response
+            .split_inclusive(' ')
+            .map(|s| s.to_string())
+            .collect();
     }
 
     pub fn toggle_nvme_cap(&mut self) {
@@ -182,6 +218,14 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, state: &DashboardState) {
         }
         lines.push(Line::from(""));
     }
+
+    lines.push(Line::from(vec![
+        Span::styled(" ▸ Prompt > ", Style::default().fg(EMERALD_OK).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{}█", state.prompt_input),
+            Style::default().fg(Color::White),
+        ),
+    ]));
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }

@@ -10,6 +10,7 @@ description = "APUS I/O Subsystem: 4KB Block/Mmap/KV Storage Backends, OS Drive 
 apus-core.workspace = true
 apus-quant.workspace = true
 blake3.workspace = true
+memmap2.workspace = true
 parking_lot.workspace = true
 tokio.workspace = true
 thiserror.workspace = true

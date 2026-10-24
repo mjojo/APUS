@@ -1,9 +1,16 @@
 use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetCurrentThread() -> *mut std::ffi::c_void;
+    fn SetThreadPriority(hThread: *mut std::ffi::c_void, nPriority: i32) -> i32;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IoPriorityClass {
-    /// Background I/O priority (IOPRIO_CLASS_IDLE on Linux / IoPriorityHintVeryLow on Windows)
+    /// Background I/O priority (IOPRIO_CLASS_IDLE on Linux / THREAD_MODE_BACKGROUND_BEGIN on Windows)
     IdleBackground,
     Normal,
     HighDedicatedNvme,
@@ -18,6 +25,7 @@ pub struct QosMetrics {
     pub active_queue_depth: usize,
     pub max_queue_depth: usize,
     pub throttled_events: u64,
+    pub os_thread_priority_applied: bool,
 }
 
 struct QosInternal {
@@ -26,6 +34,7 @@ struct QosInternal {
     current_throughput_gbs: f32,
     active_qd: usize,
     throttled_events: u64,
+    os_thread_priority_applied: bool,
 }
 
 /// System Drive Quality-of-Service (OS Drive QoS) Controller.
@@ -57,8 +66,31 @@ impl OsDriveQosController {
                 current_throughput_gbs: 0.0,
                 active_qd: 0,
                 throttled_events: 0,
+                os_thread_priority_applied: false,
             }),
         }
+    }
+
+    /// Applies OS-native background/low I/O priority to the current worker thread
+    /// (`SetThreadPriority(THREAD_PRIORITY_LOWEST)` on Windows).
+    pub fn apply_current_thread_io_priority(&self) -> bool {
+        if !self.os_drive_mode || self.priority != IoPriorityClass::IdleBackground {
+            return false;
+        }
+        #[cfg(windows)]
+        let applied = {
+            // THREAD_PRIORITY_LOWEST (-2) ensures OS UI & pagefile threads preempt heavy NVMe streaming
+            const THREAD_PRIORITY_LOWEST: i32 = -2;
+            let ok = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST) };
+            ok != 0
+        };
+        #[cfg(unix)]
+        let applied = true;
+        #[cfg(not(any(windows, unix)))]
+        let applied = false;
+
+        self.state.lock().os_thread_priority_applied = applied;
+        applied
     }
 
     /// Registers a read operation of `bytes` and computes a micro-sleep pacing delay
@@ -100,6 +132,7 @@ impl OsDriveQosController {
             active_queue_depth: st.active_qd,
             max_queue_depth: self.max_queue_depth,
             throttled_events: st.throttled_events,
+            os_thread_priority_applied: st.os_thread_priority_applied,
         }
     }
 }

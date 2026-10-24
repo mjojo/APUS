@@ -90,3 +90,71 @@ impl QuantizerInt4 {
         out
     }
 }
+
+/// Extreme INT2 expert weight quantizer (Q2_K: 4 weights per byte + per-group FP32 scale)
+/// Packed block layout: for each group of 32 weights -> 4 bytes scale (f32 LE) + 8 bytes (32 x 2-bit crumbs)
+pub struct QuantizerInt2;
+
+impl QuantizerInt2 {
+    /// Quantizes an FP32 weight slice into a compact INT2 buffer (levels: -1.5, -0.5, +0.5, +1.5 * scale)
+    pub fn quantize(weights: &[f32], imatrix: Option<&ImatrixCalibrator>) -> Vec<u8> {
+        let num_groups = weights.len().div_ceil(QUANT_GROUP_SIZE);
+        let mut out = Vec::with_capacity(num_groups * 12);
+
+        for (g_idx, chunk) in weights.chunks(QUANT_GROUP_SIZE).enumerate() {
+            let mut padded = [0.0f32; QUANT_GROUP_SIZE];
+            for (i, &w) in chunk.iter().enumerate() {
+                let imp = imatrix
+                    .and_then(|im| im.channel_importance.get(g_idx * QUANT_GROUP_SIZE + i).copied())
+                    .unwrap_or(1.0);
+                padded[i] = w * imp.powf(0.05);
+            }
+
+            let max_abs = padded.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+            let scale = if max_abs > 1e-8 { max_abs / 1.5 } else { 1.0 };
+            out.extend_from_slice(&scale.to_le_bytes());
+
+            // Pack 4 2-bit values (0..=3 representing -1.5, -0.5, +0.5, +1.5) per byte
+            for quad in padded.chunks_exact(4) {
+                let mut byte = 0u8;
+                for (shift, &val) in quad.iter().enumerate() {
+                    let norm = val / scale;
+                    let q: u8 = if norm < -1.0 {
+                        0
+                    } else if norm < 0.0 {
+                        1
+                    } else if norm < 1.0 {
+                        2
+                    } else {
+                        3
+                    };
+                    byte |= (q & 0x03) << (shift * 2);
+                }
+                out.push(byte);
+            }
+        }
+        out
+    }
+
+    /// Dequantizes a packed INT2 buffer back into an FP32 vector
+    pub fn dequantize(packed: &[u8], max_elements: usize) -> Vec<f32> {
+        const LEVELS: [f32; 4] = [-1.5, -0.5, 0.5, 1.5];
+        let mut out = Vec::with_capacity(max_elements);
+        for block in packed.chunks_exact(12) {
+            let scale = f32::from_le_bytes([block[0], block[1], block[2], block[3]]);
+            for &byte in &block[4..12] {
+                for shift in 0..4 {
+                    if out.len() >= max_elements {
+                        break;
+                    }
+                    let q = ((byte >> (shift * 2)) & 0x03) as usize;
+                    out.push(LEVELS[q] * scale);
+                }
+            }
+            if out.len() >= max_elements {
+                break;
+            }
+        }
+        out
+    }
+}

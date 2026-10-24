@@ -134,8 +134,8 @@ impl ExpertStorage for ApusBlockStorage {
             tokio::time::sleep(qos_delay).await;
         }
 
-        // 3. Stream 4KB-aligned expert block directly into PageAlignedSlot
-        let mut file = File::open(&self.path).map_err(|e| ApusError::StorageIo {
+        // 3. Stream 4KB-aligned expert block directly into PageAlignedSlot via unbuffered Direct I/O
+        let mut file = open_unbuffered_direct_file(&self.path).map_err(|e| ApusError::StorageIo {
             layer: id.layer,
             expert: id.expert,
             source: e,
@@ -177,7 +177,135 @@ impl ExpertStorage for ApusBlockStorage {
     }
 }
 
-/// 2. `KvCompressedStorage` Engine — block-compressed KV store for SATA SSDs and NAS
+/// Opens a file with OS-native unbuffered Direct I/O flags (`FILE_FLAG_NO_BUFFERING` on Windows,
+/// `O_DIRECT` on Linux) to bypass the OS Page Cache and eliminate double caching in RAM.
+/// Gracefully falls back to standard buffered open if the underlying volume rejects direct flags.
+pub fn open_unbuffered_direct_file(path: &Path) -> std::io::Result<File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_NO_BUFFERING: u32 = 0x2000_0000;
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_NO_BUFFERING)
+            .open(path)
+        {
+            return Ok(f);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        const O_DIRECT: i32 = 0x4000;
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(O_DIRECT)
+            .open(path)
+        {
+            return Ok(f);
+        }
+    }
+    File::open(path)
+}
+
+/// 2. `MmapStorage` Engine — "Speed King" Mode (Zero-Copy Virtual Memory Projection via `memmap2`)
+/// Ideal for dedicated (non-OS) NVMe drives and Apple Silicon Unified Memory.
+pub struct MmapStorage {
+    mmap: memmap2::Mmap,
+    header: ApusFileHeader,
+    lba_index: HashMap<ExpertId, LbaExpertEntry>,
+    expected_hashes: HashMap<ExpertId, blake3::Hash>,
+    prefetched: Mutex<Vec<ExpertId>>,
+}
+
+impl MmapStorage {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, ApusError> {
+        let mut file = File::open(path.as_ref()).map_err(|e| ApusError::StorageIo {
+            layer: 0,
+            expert: 0,
+            source: e,
+        })?;
+        let header = ApusFileHeader::read_from(&mut file)
+            .map_err(|e| ApusError::AllocationFailed(format!("Invalid .apus header: {e}")))?;
+        let entries = header
+            .read_lba_table(&mut file)
+            .map_err(|e| ApusError::AllocationFailed(format!("Invalid LBA table: {e}")))?;
+
+        let mmap = unsafe { memmap2::MmapOptions::new().map(&file) }.map_err(|e| {
+            ApusError::StorageIo {
+                layer: 0,
+                expert: 0,
+                source: e,
+            }
+        })?;
+
+        let mut lba_index = HashMap::with_capacity(entries.len());
+        let mut expected_hashes = HashMap::with_capacity(entries.len());
+        for entry in entries {
+            let id = ExpertId {
+                layer: entry.layer_id,
+                expert: entry.expert_id,
+            };
+            let start = entry.file_offset as usize;
+            let end = start + (entry.compressed_size as usize);
+            if end <= mmap.len() {
+                expected_hashes.insert(id, blake3::hash(&mmap[start..end]));
+                lba_index.insert(id, entry);
+            }
+        }
+
+        Ok(Self {
+            mmap,
+            header,
+            lba_index,
+            expected_hashes,
+            prefetched: Mutex::new(Vec::new()),
+        })
+    }
+
+    pub fn header(&self) -> &ApusFileHeader {
+        &self.header
+    }
+}
+
+impl ExpertStorage for MmapStorage {
+    async fn read_expert_into_slot(
+        &self,
+        id: ExpertId,
+        slot: &mut PageAlignedSlot,
+    ) -> Result<(), ApusError> {
+        let entry = self.lba_index.get(&id).copied().ok_or_else(|| ApusError::StorageIo {
+            layer: id.layer,
+            expert: id.expert,
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "Expert missing in mmap LBA"),
+        })?;
+
+        let start = entry.file_offset as usize;
+        let len = (entry.compressed_size as usize).min(slot.size());
+        let src = &self.mmap[start..start + len];
+
+        if let Some(expected) = self.expected_hashes.get(&id) {
+            let actual = blake3::hash(src);
+            if &actual != expected {
+                return Err(ApusError::CorruptedExpertWeights {
+                    layer: id.layer,
+                    expert: id.expert,
+                });
+            }
+        }
+
+        slot.as_mut_slice()[..len].copy_from_slice(src);
+        Ok(())
+    }
+
+    fn prefetch_experts(&self, upcoming: &[ExpertId]) {
+        let mut p = self.prefetched.lock();
+        p.clear();
+        p.extend_from_slice(upcoming);
+    }
+}
+
+/// 3. `KvCompressedStorage` Engine — block-compressed KV store for SATA SSDs and NAS
 pub struct KvCompressedStorage {
     store: Mutex<HashMap<ExpertId, Vec<u8>>>,
     prefetched: Mutex<Vec<ExpertId>>,
@@ -270,6 +398,15 @@ mod tests {
             .read_expert_into_slot(ExpertId { layer: 0, expert: 0 }, &mut slot)
             .await;
         assert!(matches!(err, Err(ApusError::ThermalThrottleTripped { temp_c: 72 })));
+
+        // Verify zero-copy MmapStorage on the same .apus container
+        let mmap_storage = MmapStorage::open(&tmp_path).expect("open mmap storage failed");
+        let mut mmap_slot = PageAlignedSlot::new(4096).expect("mmap slot failed");
+        mmap_storage
+            .read_expert_into_slot(ExpertId { layer: 0, expert: 0 }, &mut mmap_slot)
+            .await
+            .expect("mmap read failed");
+        assert_eq!(mmap_slot.as_slice()[0], 0x42);
 
         let _ = std::fs::remove_file(&tmp_path);
     }

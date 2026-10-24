@@ -39,6 +39,8 @@ toml = "0.8"
 ratatui = "0.29"
 crossterm = "0.28"
 axum = "0.8"
+memmap2 = "0.9"
+tokio-stream = "0.1"
 
 # Internal workspace crates
 apus-core = { path = "crates/apus-core" }

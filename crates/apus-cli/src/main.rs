@@ -381,7 +381,12 @@ fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
                         match key.code {
-                            KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+                            KeyCode::Esc => {
+                                return Ok(());
+                            }
+                            KeyCode::Char('q') | KeyCode::Char('Q')
+                                if dash.prompt_input.is_empty() =>
+                            {
                                 return Ok(());
                             }
                             KeyCode::Char('s') | KeyCode::Char('S')
@@ -394,6 +399,17 @@ fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
                                 if key.modifiers.contains(KeyModifiers::CONTROL) =>
                             {
                                 dash.toggle_nvme_cap();
+                            }
+                            KeyCode::Enter => {
+                                dash.submit_prompt();
+                            }
+                            KeyCode::Backspace => {
+                                dash.prompt_input.pop();
+                            }
+                            KeyCode::Char(c)
+                                if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                dash.prompt_input.push(c);
                             }
                             _ => {}
                         }

@@ -2,6 +2,7 @@ pub mod cache;
 pub mod config;
 pub mod mla;
 pub mod mtp;
+pub mod sampler;
 pub mod slab;
 
 use std::alloc::{alloc, dealloc, Layout};
@@ -12,7 +13,21 @@ pub use cache::{ArcCache, ArcTelemetry, CacheTier};
 pub use config::ApusConfig;
 pub use mla::{LatentKvToken, MlaKvCache, KV_PAGE_TOKENS, MLA_LATENT_DIM};
 pub use mtp::{LookAheadPrefetcher, MoERouter, MtpSpeculativeEngine, RoutedExpertSelection};
+pub use sampler::{BpeTokenizer, GenerationSampler, SamplerConfig};
 pub use slab::SlabArena;
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn VirtualLock(lpAddress: *mut std::ffi::c_void, dwSize: usize) -> i32;
+    fn VirtualUnlock(lpAddress: *mut std::ffi::c_void, dwSize: usize) -> i32;
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn mlock(addr: *const std::ffi::c_void, len: usize) -> i32;
+    fn munlock(addr: *const std::ffi::c_void, len: usize) -> i32;
+}
 
 /// Author signature of the APUS runtime engine
 pub const ENGINE_AUTHOR: &str = "mjojo";
@@ -52,6 +67,7 @@ pub struct PageAlignedSlot {
     ptr: NonNull<u8>,
     layout: Layout,
     pinned: bool,
+    os_locked: bool,
 }
 
 unsafe impl Send for PageAlignedSlot {}
@@ -76,16 +92,47 @@ impl PageAlignedSlot {
             ptr,
             layout,
             pinned: false,
+            os_locked: false,
         })
     }
 
-    /// Marks the buffer as pinned in physical RAM (Anti-Swap protection via VirtualLock / mlock)
-    pub fn pin_memory(&mut self) {
+    /// Pins the buffer in physical RAM using OS-native VirtualLock (Windows) or mlock (Unix)
+    /// to prevent the OS kernel from swapping cached MoE expert weights to the pagefile.
+    pub fn pin_memory(&mut self) -> bool {
         self.pinned = true;
+        if self.os_locked {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            let res = unsafe {
+                VirtualLock(
+                    self.ptr.as_ptr() as *mut std::ffi::c_void,
+                    self.layout.size(),
+                )
+            };
+            self.os_locked = res != 0;
+        }
+        #[cfg(unix)]
+        {
+            let res = unsafe {
+                mlock(
+                    self.ptr.as_ptr() as *const std::ffi::c_void,
+                    self.layout.size(),
+                )
+            };
+            self.os_locked = res == 0;
+        }
+        self.os_locked
     }
 
     pub fn is_pinned(&self) -> bool {
         self.pinned
+    }
+
+    /// Returns true if the OS kernel confirmed physical page locking (`VirtualLock` / `mlock`)
+    pub fn is_os_locked(&self) -> bool {
+        self.os_locked
     }
 
     /// Verifies that the memory address is strictly a multiple of 4096 bytes
@@ -112,6 +159,22 @@ impl PageAlignedSlot {
 
 impl Drop for PageAlignedSlot {
     fn drop(&mut self) {
+        if self.os_locked {
+            #[cfg(windows)]
+            unsafe {
+                let _ = VirtualUnlock(
+                    self.ptr.as_ptr() as *mut std::ffi::c_void,
+                    self.layout.size(),
+                );
+            }
+            #[cfg(unix)]
+            unsafe {
+                let _ = munlock(
+                    self.ptr.as_ptr() as *const std::ffi::c_void,
+                    self.layout.size(),
+                );
+            }
+        }
         unsafe { dealloc(self.ptr.as_ptr(), self.layout) };
     }
 }
@@ -182,5 +245,22 @@ mod tests {
         let serialized = kv.to_bytes();
         let restored = MlaKvCache::from_bytes(&serialized, 4, 16);
         assert_eq!(restored.total_context_tokens(), 30);
+    }
+
+    #[test]
+    fn test_bpe_tokenizer_and_sampler() {
+        let tok = BpeTokenizer::new_default();
+        let text = "pub struct PageAlignedSlot // mjojo";
+        let encoded = tok.encode(text);
+        assert!(!encoded.is_empty());
+        assert!(encoded.len() < text.len());
+        let decoded = tok.decode(&encoded);
+        assert_eq!(decoded, text);
+
+        let mut sampler = GenerationSampler::new(SamplerConfig::default(), 42);
+        let mut logits = vec![-2.0f32; 128];
+        logits[17] = 10.0;
+        let sampled = sampler.sample(&logits, &[1, 2, 3]);
+        assert_eq!(sampled, 17);
     }
 }

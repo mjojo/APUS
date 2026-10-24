@@ -1,10 +1,15 @@
 use apus_core::ENGINE_AUTHOR;
 use axum::{
     extract::State,
+    response::{
+        sse::{Event as SseEvent, Sse},
+        IntoResponse, Response,
+    },
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -44,6 +49,7 @@ pub struct ChatCompletionRequest {
     pub model: Option<String>,
     pub messages: Vec<ChatMessage>,
     pub max_tokens: Option<usize>,
+    pub stream: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -79,6 +85,30 @@ pub struct ChatUsage {
     pub mtp_speedup_factor: f32,
 }
 
+#[derive(Serialize)]
+pub struct ChatCompletionChunk {
+    pub id: String,
+    pub object: &'static str,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<ChatChunkChoice>,
+}
+
+#[derive(Serialize)]
+pub struct ChatChunkChoice {
+    pub index: usize,
+    pub delta: ChatDelta,
+    pub finish_reason: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+pub struct ChatDelta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
 pub fn build_openai_router(state: ApiServerState) -> Router {
     Router::new()
         .route("/health", get(health_handler))
@@ -111,7 +141,7 @@ async fn list_models_handler(State(state): State<ApiServerState>) -> Json<Models
 async fn chat_completions_handler(
     State(state): State<ApiServerState>,
     Json(req): Json<ChatCompletionRequest>,
-) -> Json<ChatCompletionResponse> {
+) -> Response {
     let req_num = state.requests_served.fetch_add(1, Ordering::Relaxed) + 1;
     let last_prompt = req
         .messages
@@ -119,12 +149,13 @@ async fn chat_completions_handler(
         .map(|m| m.content.as_str())
         .unwrap_or("Hello");
 
+    let model_used = req.model.unwrap_or_else(|| state.model_name.clone());
     let prompt_tokens = last_prompt.split_whitespace().count().max(1) * 2;
     let completion_tokens = req.max_tokens.unwrap_or(64).min(256);
 
     let reply_text = format!(
         "[APUS // {} // engineered by mjojo]\nRequest #{req_num} processed via 4KB page-aligned expert streaming pipeline (ARC Hit: 92.4%, MLA Latent KV: 576d, MTP 2x Active).\nResponse to: \"{}\"",
-        req.model.as_deref().unwrap_or(&state.model_name),
+        model_used,
         last_prompt
     );
 
@@ -132,12 +163,57 @@ async fn chat_completions_handler(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    let completion_id = format!("chatcmpl-apus-{req_num}");
+
+    // Server-Sent Events (SSE) streaming mode when `stream: true`
+    if req.stream.unwrap_or(false) {
+        let mut events: Vec<Result<SseEvent, Infallible>> = Vec::new();
+        for (i, token_piece) in reply_text.split_inclusive(' ').enumerate() {
+            let chunk = ChatCompletionChunk {
+                id: completion_id.clone(),
+                object: "chat.completion.chunk",
+                created: now,
+                model: model_used.clone(),
+                choices: vec![ChatChunkChoice {
+                    index: 0,
+                    delta: ChatDelta {
+                        role: if i == 0 { Some("assistant") } else { None },
+                        content: Some(token_piece.to_string()),
+                    },
+                    finish_reason: None,
+                }],
+            };
+            let payload = serde_json::to_string(&chunk).unwrap_or_default();
+            events.push(Ok(SseEvent::default().data(payload)));
+        }
+
+        let final_chunk = ChatCompletionChunk {
+            id: completion_id,
+            object: "chat.completion.chunk",
+            created: now,
+            model: model_used,
+            choices: vec![ChatChunkChoice {
+                index: 0,
+                delta: ChatDelta {
+                    role: None,
+                    content: None,
+                },
+                finish_reason: Some("stop"),
+            }],
+        };
+        events.push(Ok(
+            SseEvent::default().data(serde_json::to_string(&final_chunk).unwrap_or_default())
+        ));
+        events.push(Ok(SseEvent::default().data("[DONE]")));
+
+        return Sse::new(tokio_stream::iter(events)).into_response();
+    }
 
     Json(ChatCompletionResponse {
-        id: format!("chatcmpl-apus-{req_num}"),
+        id: completion_id,
         object: "chat.completion",
         created: now,
-        model: req.model.unwrap_or(state.model_name),
+        model: model_used,
         author_signature: "apus-moe // authored by mjojo",
         choices: vec![ChatChoice {
             index: 0,
@@ -155,4 +231,5 @@ async fn chat_completions_handler(
             mtp_speedup_factor: 1.85,
         },
     })
+    .into_response()
 }
