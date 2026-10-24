@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod converter;
 pub mod format;
+pub mod gguf;
 pub mod imatrix;
 pub mod safetensors;
 
@@ -10,6 +11,7 @@ pub use format::{
     APUS_MAGIC, AUTHOR_SIGNATURE, ApusFileHeader, FormatError, LbaExpertEntry,
     ROOST_AUTHOR_SIGNATURE, ROOST_MAGIC, RoostSessionHeader, RoostSnapshot,
 };
+pub use gguf::{GgufError, GgufParser, GgufTensorInfo};
 pub use imatrix::{
     ImatrixCalibrator, QUANT_GROUP_SIZE, QuantizerInt2, QuantizerInt4, QuantizerInt8,
 };
@@ -156,5 +158,45 @@ mod tests {
         let summary = GgufHeaderSummary::read_from(&gguf_bytes[..]).expect("gguf parse failed");
         assert_eq!(summary.version, 3);
         assert_eq!(summary.tensor_count, 21504);
+
+        // Verify full GgufParser -> .apus conversion roundtrip
+        let tmp_gguf = std::env::temp_dir().join("test_mjojo_sample.gguf");
+        let tmp_apus = std::env::temp_dir().join("test_mjojo_from_gguf.apus");
+        {
+            use std::io::Write;
+            let mut f = File::create(&tmp_gguf).unwrap();
+            f.write_all(GGUF_MAGIC).unwrap();
+            f.write_all(&3u32.to_le_bytes()).unwrap(); // v3
+            f.write_all(&1u64.to_le_bytes()).unwrap(); // 1 tensor
+            f.write_all(&1u64.to_le_bytes()).unwrap(); // 1 metadata KV
+            // Metadata KV: key="general.architecture" (len 20), type=8 (STRING), val="deepseek2" (len 9)
+            let key = b"general.architecture";
+            f.write_all(&(key.len() as u64).to_le_bytes()).unwrap();
+            f.write_all(key).unwrap();
+            f.write_all(&8u32.to_le_bytes()).unwrap();
+            let val = b"deepseek2";
+            f.write_all(&(val.len() as u64).to_le_bytes()).unwrap();
+            f.write_all(val).unwrap();
+            // Tensor info: name="blk.0.ffn_gate_exps.weight", n_dims=2, dims=[64, 64], type=2 (Q4_0), offset=0
+            let tname = b"blk.0.ffn_gate_exps.weight";
+            f.write_all(&(tname.len() as u64).to_le_bytes()).unwrap();
+            f.write_all(tname).unwrap();
+            f.write_all(&2u32.to_le_bytes()).unwrap();
+            f.write_all(&64u64.to_le_bytes()).unwrap();
+            f.write_all(&64u64.to_le_bytes()).unwrap();
+            f.write_all(&2u32.to_le_bytes()).unwrap();
+            f.write_all(&0u64.to_le_bytes()).unwrap();
+            // Pad to 32B + tensor payload (4096 bytes)
+            f.write_all(&vec![0x77u8; 4096]).unwrap();
+        }
+        let mut parser = GgufParser::open(&tmp_gguf).expect("GgufParser::open failed");
+        assert_eq!(parser.version, 3);
+        assert_eq!(parser.tensors.len(), 1);
+        let root_hash = parser
+            .convert_to_apus(&tmp_apus, "DeepSeek-GGUF-Test", 1, 2)
+            .expect("convert_to_apus failed");
+        assert_eq!(root_hash.len(), 64);
+        let _ = std::fs::remove_file(&tmp_gguf);
+        let _ = std::fs::remove_file(&tmp_apus);
     }
 }

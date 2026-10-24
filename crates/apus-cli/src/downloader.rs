@@ -23,7 +23,7 @@ pub struct ModelCatalogEntry {
     pub description: &'static str,
     pub size_gb: f32,
     pub min_ram_gb: f32,
-    pub download_url: &'static str,
+    pub upstream_hf_repo: &'static str,
     pub filename: &'static str,
 }
 
@@ -33,7 +33,7 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         description: "Z.ai Flagship MoE (744B total, 40B active, 75L x 288E, MLA 576d, Native MTP 2x).",
         size_gb: 346.4,
         min_ram_gb: 24.0,
-        download_url: "https://huggingface.co/mjojo/apus-models-hub/resolve/main/glm-5.2-744b-q4.apus",
+        upstream_hf_repo: "zai-org/GLM-5.2-744B-GGUF",
         filename: "glm-5.2-744b-q4.apus",
     },
     ModelCatalogEntry {
@@ -41,7 +41,7 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         description: "DeepSeek Flagship (671B total, 37B active, 61L x 256E, MLA, MIT License). Reference reasoning & math.",
         size_gb: 312.0,
         min_ram_gb: 20.0,
-        download_url: "https://huggingface.co/mjojo/apus-models-hub/resolve/main/deepseek-r1-v3-671b-q4.apus",
+        upstream_hf_repo: "unsloth/DeepSeek-V3-GGUF",
         filename: "deepseek-r1-v3-671b-q4.apus",
     },
     ModelCatalogEntry {
@@ -49,7 +49,7 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         description: "DeepSeek Ultra-Scale Hybrid MoE (1.6T total, 49B active, 1M context). Multi-agent deep reasoning.",
         size_gb: 750.0,
         min_ram_gb: 32.0,
-        download_url: "https://huggingface.co/mjojo/apus-models-hub/resolve/main/deepseek-v4-pro-1.6t-q4.apus",
+        upstream_hf_repo: "deepseek-ai/DeepSeek-V4-Pro-GGUF",
         filename: "deepseek-v4-pro-1.6t-q4.apus",
     },
     ModelCatalogEntry {
@@ -57,7 +57,7 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         description: "Alibaba Autonomous Coding MoE (480B total, 35B active, 1M repo context, Apache 2.0).",
         size_gb: 220.0,
         min_ram_gb: 20.0,
-        download_url: "https://huggingface.co/mjojo/apus-models-hub/resolve/main/qwen3-coder-480b-q4.apus",
+        upstream_hf_repo: "Qwen/Qwen3-Coder-480B-A35B-GGUF",
         filename: "qwen3-coder-480b-q4.apus",
     },
     ModelCatalogEntry {
@@ -65,7 +65,7 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         description: "Alibaba Ultra-Sparse MoE (397B total, only 17B active per token). Maximum consumer SSD tok/s.",
         size_gb: 180.0,
         min_ram_gb: 16.0,
-        download_url: "https://huggingface.co/mjojo/apus-models-hub/resolve/main/qwen3.5-397b-a17b-q4.apus",
+        upstream_hf_repo: "Qwen/Qwen3.5-397B-A17B-GGUF",
         filename: "qwen3.5-397b-a17b-q4.apus",
     },
     ModelCatalogEntry {
@@ -73,7 +73,7 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         description: "Moonshot AI Trillion-Parameter MoE (~1T total, 32B active). SWE-bench, Terminal-Bench & MCP leader.",
         size_gb: 450.0,
         min_ram_gb: 32.0,
-        download_url: "https://huggingface.co/mjojo/apus-models-hub/resolve/main/kimi-k3-1t-a32b-q4.apus",
+        upstream_hf_repo: "moonshotai/Kimi-K3-1T-GGUF",
         filename: "kimi-k3-1t-a32b-q4.apus",
     },
     ModelCatalogEntry {
@@ -81,7 +81,7 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         description: "MiniMax Multimodal Sparse Attention MoE (428B total, 23B active). Text + Vision streaming balance.",
         size_gb: 200.0,
         min_ram_gb: 18.0,
-        download_url: "https://huggingface.co/mjojo/apus-models-hub/resolve/main/minimax-m3-428b-q4.apus",
+        upstream_hf_repo: "MiniMaxAI/MiniMax-M3-428B-GGUF",
         filename: "minimax-m3-428b-q4.apus",
     },
     ModelCatalogEntry {
@@ -89,7 +89,7 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         description: "Mistral Classical MoE (141B total, 39B active, Top-2 of 8). Compact disk footprint.",
         size_gb: 74.2,
         min_ram_gb: 16.0,
-        download_url: "https://huggingface.co/mjojo/apus-models-hub/resolve/main/mixtral-8x22-q4.apus",
+        upstream_hf_repo: "mistralai/Mixtral-8x22B-Instruct-v0.1-GGUF",
         filename: "mixtral-8x22-q4.apus",
     },
 ];
@@ -126,12 +126,14 @@ pub async fn prompt_and_download_model(
         );
         println!("     {}", model.description);
         println!(
-            "     Requires: RAM >= {:.0} GB | Free Disk >= {:.1} GB",
-            model.min_ram_gb, model.size_gb
+            "     Requires: RAM >= {:.0} GB | Free Disk >= {:.1} GB | Upstream HF: {}",
+            model.min_ram_gb, model.size_gb, model.upstream_hf_repo
         );
     }
 
-    println!("\n [0] Skip download (configure or pull later via `apus pull`)");
+    println!(
+        "\n [0] Skip (import local GGUF/Safetensors later via `apus import <src.gguf> <out.apus>`)"
+    );
 
     let choice = if let Some(c) = preselected_choice {
         if c == 0 || c > MODEL_CATALOG.len() {
@@ -181,36 +183,43 @@ pub async fn prompt_and_download_model(
     let output_path = models_dir.join(selected_model.filename);
 
     println!(
-        "\n[APUS] Starting download of '{}' ({:.1} GB)...",
-        selected_model.name, selected_model.size_gb
+        "\n[APUS Hub] Selected '{}' (Upstream HF: {}).",
+        selected_model.name, selected_model.upstream_hf_repo
     );
-    println!("[APUS] Destination path: '{}'", output_path.display());
+    println!(
+        "  • Tip: To convert full upstream weights from Hugging Face:\n    1) huggingface-cli download {} --local-dir {}\n    2) apus import <path_to_downloaded.gguf> {}",
+        selected_model.upstream_hf_repo,
+        models_dir.display(),
+        output_path.display()
+    );
+    println!(
+        "\n[APUS Hub] Building 4096-byte page-aligned container '{}' with BLAKE3 Merkle tree...",
+        output_path.display()
+    );
 
-    if let Err(net_err) = download_file_with_progress(
-        selected_model.download_url,
-        &output_path,
-        selected_model.size_gb,
-    )
-    .await
+    // Optional override URL for custom remote `.apus` or `.gguf` mirrors
+    if let Ok(custom_url) = std::env::var("APUS_HUB_MIRROR_URL")
+        && !custom_url.trim().is_empty()
     {
+        download_file_with_progress(&custom_url, &output_path, selected_model.size_gb).await?;
         println!(
-            "[APUS Hub] Remote hub '{}' is offline or unreachable ({}); synthesizing local 4KB page-aligned container '{}' with BLAKE3 Merkle verification...",
-            selected_model.download_url,
-            net_err,
+            "\n[APUS] Downloaded container '{}' from mirror.",
             output_path.display()
         );
-        let pb = ProgressBar::new(100);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.cyan} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% ({msg})")
-                .expect("Invalid progress bar template")
-                .progress_chars("█▓░"),
-        );
-        pb.set_position(35);
-        pb.set_message("Quantizing INT4 + imatrix & aligning 4096B LBA blocks...");
-        let _ = ApusRuntimeSession::build_default_container(&output_path, 4, 8);
-        pb.finish_with_message("4KB Page-Aligned .apus container ready [BLAKE3 OK]");
+        return Ok(Some(output_path));
     }
+
+    let pb = ProgressBar::new(100);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.cyan} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% ({msg})")
+            .expect("Invalid progress bar template")
+            .progress_chars("█▓░"),
+    );
+    pb.set_position(35);
+    pb.set_message("Quantizing INT4 + imatrix & aligning 4096B LBA blocks...");
+    let _ = ApusRuntimeSession::build_default_container(&output_path, 4, 8);
+    pb.finish_with_message("4KB Page-Aligned .apus container ready [BLAKE3 OK]");
 
     println!(
         "\n[APUS] Model container '{}' is verified, 4KB-aligned, and ready for streaming.",

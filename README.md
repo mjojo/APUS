@@ -187,14 +187,19 @@ cargo run --release --bin apus -- wizard apus.toml "C:/APUS_Models"
 cargo run --release --bin apus -- pull
 ```
 
-### 3. Import Upstream Hugging Face `.safetensors` / `.gguf` or Pack Synthetic MoE Weights
+### 3. Real-World Workflow: Local GGUF / Safetensors Import & 4KB `.apus` Conversion
+
+Because `*.apus` is APUS's custom 4096-byte page-aligned binary format (with LBA Offset Tables and BLAKE3 Merkle trees), standard upstream weights downloaded from Hugging Face (such as `.gguf` from Unsloth/Bartowski or `.safetensors` shards) are converted locally on your NVMe drive via `apus import`:
 
 ```bash
-# Import a Hugging Face .safetensors or .gguf shard into a 4KB-aligned *.apus container:
-cargo run --release --bin apus -- import model.safetensors glm-5.2-744b-q4.apus
+# Step 1: Download standard upstream GGUF or Safetensors weights from Hugging Face:
+huggingface-cli download unsloth/DeepSeek-V3-GGUF --include "DeepSeek-V3-Q4_K_M-00001-of-00005.gguf" --local-dir ./models
 
-# Or pack a reference INT4 (imatrix) *.apus container directly:
-cargo run --release --bin apus -- convert glm-5.2-744b-q4.apus 4 8
+# Step 2: Parse GGUF tensor descriptors (`blk.N.ffn_gate_exps`), align experts to 4096B pages & build *.apus:
+cargo run --release --bin apus -- import ./models/DeepSeek-V3-Q4_K_M.gguf ./models/deepseek-v3.apus
+
+# Or pack a synthetic INT4 (imatrix) *.apus container directly for benchmarking:
+cargo run --release --bin apus -- convert ./models/glm-5.2-744b-q4.apus 4 8
 ```
 
 ### 4. Inspect Container Header, LBA Alignment & BLAKE3 Integrity

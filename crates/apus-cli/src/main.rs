@@ -1,4 +1,5 @@
 mod downloader;
+mod importer;
 mod init;
 mod runtime;
 mod server;
@@ -15,9 +16,8 @@ use apus_io::{
 };
 use apus_net::DualGpuPipeline;
 use apus_quant::{
-    ApusConverter, ApusFileHeader, GgufHeaderSummary, ImatrixCalibrator,
-    QuantizationQualityAuditor, QuantizerInt4, RoostSnapshot, SafetensorDescriptor,
-    SafetensorsMoEParser, SourceExpert,
+    ApusConverter, ApusFileHeader, ImatrixCalibrator, QuantizationQualityAuditor, QuantizerInt4,
+    RoostSnapshot, SourceExpert,
 };
 use apus_tui::{DashboardState, render_dashboard, run_boot_splash};
 use crossterm::{
@@ -67,15 +67,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cmd_convert(output, layers, experts_per_layer)?;
         }
         "import" => {
-            let src = args
-                .get(2)
-                .map(|s| s.as_str())
-                .unwrap_or("sample_moe.safetensors");
+            let src = args.get(2).map(|s| s.as_str()).unwrap_or("sample_moe.gguf");
             let dst = args
                 .get(3)
                 .map(|s| s.as_str())
                 .unwrap_or("imported-moe.apus");
-            cmd_import_upstream(src, dst)?;
+            let layers: u32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(4);
+            let experts: u32 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(8);
+            importer::handle_import_command(src, dst, layers, experts)?;
         }
         "inspect" => {
             let resolved =
@@ -202,100 +201,6 @@ fn cmd_convert(
     println!("[APUS Converter] Author Signature : apus-moe // authored by mjojo");
     println!("[APUS Converter] BLAKE3 Merkle Root: 0x{}", root_blake3);
     Ok(())
-}
-
-fn cmd_import_upstream(src_path: &str, dst_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if src_path.ends_with(".gguf") && Path::new(src_path).exists() {
-        let f = File::open(src_path)?;
-        let summary = GgufHeaderSummary::read_from(f)?;
-        println!(
-            "[APUS Importer // by mjojo] Parsed GGUF v{} ({} tensors, {} metadata KVs).",
-            summary.version, summary.tensor_count, summary.metadata_kv_count
-        );
-        cmd_convert(dst_path, 4, 8)?;
-        return Ok(());
-    }
-
-    let raw_bytes = if Path::new(src_path).exists() {
-        std::fs::read(src_path)?
-    } else {
-        println!(
-            "[APUS Importer // by mjojo] Source '{}' not found on disk; synthesizing in-memory Hugging Face .safetensors MoE shard...",
-            src_path
-        );
-        build_synthetic_safetensors_shard(2, 4)
-    };
-
-    let parser = SafetensorsMoEParser::parse_header(&raw_bytes)?;
-    println!(
-        "[APUS Importer // by mjojo] Parsed .safetensors header ({} tensor descriptors, payload offset {} B).",
-        parser.descriptors.len(),
-        parser.payload_offset
-    );
-
-    let imatrix = ImatrixCalibrator::uniform(512);
-    let converter =
-        parser.into_apus_converter(&raw_bytes, "HF-IMPORTED-MoE-Q4", 2, 4, Some(&imatrix))?;
-    let root_hex = converter.build(dst_path)?;
-    println!(
-        "[APUS Importer // by mjojo] Imported into 4KB-aligned '{}' (BLAKE3 Merkle Root: 0x{}).",
-        dst_path, root_hex
-    );
-    Ok(())
-}
-
-fn build_synthetic_safetensors_shard(layers: u16, experts: u16) -> Vec<u8> {
-    let mut descriptors = std::collections::HashMap::new();
-    let mut payload = Vec::new();
-
-    // 1. Dense attention + shared_experts tensors
-    for l in 0..layers {
-        for name in [
-            format!("model.layers.{l}.self_attn.q_proj.weight"),
-            format!("model.layers.{l}.mlp.shared_experts.gate_proj.weight"),
-        ] {
-            let start = payload.len();
-            for i in 0..128 {
-                let val = ((l as usize * 19 + i) as f32 * 0.04).cos();
-                payload.extend_from_slice(&val.to_le_bytes());
-            }
-            let end = payload.len();
-            descriptors.insert(
-                name,
-                SafetensorDescriptor {
-                    dtype: "F32".into(),
-                    shape: vec![16, 8],
-                    data_offsets: [start, end],
-                },
-            );
-        }
-
-        // 2. Routed MoE experts
-        for e in 0..experts {
-            let name = format!("model.layers.{l}.mlp.experts.{e}.gate_proj.weight");
-            let start = payload.len();
-            for i in 0..256 {
-                let val = ((l as usize * 31 + e as usize * 11 + i) as f32 * 0.03).sin();
-                payload.extend_from_slice(&val.to_le_bytes());
-            }
-            let end = payload.len();
-            descriptors.insert(
-                name,
-                SafetensorDescriptor {
-                    dtype: "F32".into(),
-                    shape: vec![16, 16],
-                    data_offsets: [start, end],
-                },
-            );
-        }
-    }
-
-    let json_bytes = serde_json::to_vec(&descriptors).unwrap();
-    let mut out = Vec::with_capacity(8 + json_bytes.len() + payload.len());
-    out.extend_from_slice(&(json_bytes.len() as u64).to_le_bytes());
-    out.extend_from_slice(&json_bytes);
-    out.extend_from_slice(&payload);
-    out
 }
 
 fn cmd_inspect(path: &str) -> Result<(), Box<dyn std::error::Error>> {
