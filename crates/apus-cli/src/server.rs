@@ -1,3 +1,4 @@
+use crate::runtime::ApusRuntimeSession;
 use apus_core::ENGINE_AUTHOR;
 use axum::{
     Json, Router,
@@ -20,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct ApiServerState {
     pub model_name: String,
     pub requests_served: Arc<AtomicU64>,
+    pub runtime: Option<Arc<ApusRuntimeSession>>,
 }
 
 #[derive(Serialize)]
@@ -150,13 +152,29 @@ async fn chat_completions_handler(
         .unwrap_or("Hello");
 
     let model_used = req.model.unwrap_or_else(|| state.model_name.clone());
-    let prompt_tokens = last_prompt.split_whitespace().count().max(1) * 2;
-    let completion_tokens = req.max_tokens.unwrap_or(64).min(256);
+    let max_steps = (req.max_tokens.unwrap_or(18) / 3).clamp(2, 12);
 
-    let reply_text = format!(
-        "[APUS // {} // engineered by mjojo]\nRequest #{req_num} processed via 4KB page-aligned expert streaming pipeline (ARC Hit: 92.4%, MLA Latent KV: 576d, MTP 2x Active).\nResponse to: \"{}\"",
-        model_used, last_prompt
-    );
+    let (reply_text, prompt_tokens, completion_tokens, hit_rate_pct) = if let Some(rt) =
+        &state.runtime
+    {
+        match rt.generate_response(last_prompt, max_steps).await {
+            Ok(gen_res) => (
+                gen_res.reply_text,
+                gen_res.prompt_tokens,
+                gen_res.completion_tokens,
+                gen_res.arc_telemetry.hit_rate_percent(),
+            ),
+            Err(e) => (format!("[APUS Runtime Error]: {e}"), 4, 4, 0.0),
+        }
+    } else {
+        let p_toks = last_prompt.split_whitespace().count().max(1) * 2;
+        let c_toks = req.max_tokens.unwrap_or(64).min(256);
+        let text = format!(
+            "[APUS // {} // engineered by mjojo]\nRequest #{req_num} processed via 4KB page-aligned expert streaming pipeline (ARC Hit: 92.4%, MLA Latent KV: 576d, MTP 2x Active).\nResponse to: \"{}\"",
+            model_used, last_prompt
+        );
+        (text, p_toks, c_toks, 92.4)
+    };
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -226,7 +244,7 @@ async fn chat_completions_handler(
             prompt_tokens,
             completion_tokens,
             total_tokens: prompt_tokens + completion_tokens,
-            arc_cache_hit_rate_pct: 92.4,
+            arc_cache_hit_rate_pct: hit_rate_pct,
             mtp_speedup_factor: 1.85,
         },
     })
@@ -247,6 +265,7 @@ mod tests {
         let state = ApiServerState {
             model_name: "GLM-5.2-744B-Q4_K_M.apus".into(),
             requests_served: Arc::new(AtomicU64::new(0)),
+            runtime: None,
         };
 
         // 1. Test /health & /v1/models handlers

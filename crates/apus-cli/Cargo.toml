@@ -17,6 +17,7 @@ apus-io.workspace = true
 apus-backends.workspace = true
 apus-net.workspace = true
 apus-tui.workspace = true
+parking_lot.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 axum.workspace = true

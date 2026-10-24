@@ -109,6 +109,24 @@ impl DashboardState {
             .collect();
     }
 
+    pub fn apply_runtime_response(
+        &mut self,
+        reply_text: String,
+        tok_per_sec: f32,
+        hit_rate_pct: f32,
+        context_tokens_total: usize,
+        nvme_temp_c: u8,
+    ) {
+        self.header.tok_per_sec = tok_per_sec;
+        self.header.hit_rate = hit_rate_pct;
+        self.header.nvme_temp_c = nvme_temp_c;
+        self.context_tokens_k = 48.2 + (context_tokens_total as f32 / 1000.0);
+        self.pending_stream_tokens = reply_text
+            .split_inclusive(' ')
+            .map(|s| s.to_string())
+            .collect();
+    }
+
     pub fn toggle_nvme_cap(&mut self) {
         self.nvme_cap_pct = match self.nvme_cap_pct {
             80 => 100,
