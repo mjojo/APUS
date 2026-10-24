@@ -1,13 +1,13 @@
 use crate::header::{
-    render_header, TelemetryHeaderState, BG_DARK, BORDER_SLATE, CYAN_NEON, EMERALD_OK, GOLD_BADGE,
-    INDIGO_GLOW, TEXT_MUTED,
+    BG_DARK, BORDER_SLATE, CYAN_NEON, EMERALD_OK, GOLD_BADGE, INDIGO_GLOW, TEXT_MUTED,
+    TelemetryHeaderState, render_header,
 };
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 /// State for the fullscreen APUS Telemetry HUD (btop++ / Aerospace Cyberpunk style)
@@ -79,10 +79,10 @@ impl DashboardState {
         // Stream pending tokens into the active assistant response in real time
         if !self.pending_stream_tokens.is_empty() {
             let next_tok = self.pending_stream_tokens.remove(0);
-            if let Some((sender, body)) = self.chat_messages.last_mut() {
-                if sender.starts_with("APUS") {
-                    body.push_str(&next_tok);
-                }
+            if let Some((sender, body)) = self.chat_messages.last_mut()
+                && sender.starts_with("APUS")
+            {
+                body.push_str(&next_tok);
             }
             self.context_tokens_k += 0.002;
         }
@@ -167,14 +167,23 @@ pub fn render_dashboard(frame: &mut Frame, state: &DashboardState) {
         .unwrap_or("APUS Engine // authored by mjojo");
     let footer = Paragraph::new(Line::from(vec![
         Span::styled("┗━ ", Style::default().fg(BORDER_SLATE)),
-        Span::styled("[Ctrl+S]", Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Ctrl+S]",
+            Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Save .roost ━ ", Style::default().fg(TEXT_MUTED)),
-        Span::styled("[Ctrl+T]", Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Ctrl+T]",
+            Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             format!(" NVMe Cap ({}%) ━ ", state.nvme_cap_pct),
             Style::default().fg(TEXT_MUTED),
         ),
-        Span::styled("[Q/Esc]", Style::default().fg(GOLD_BADGE).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Q/Esc]",
+            Style::default().fg(GOLD_BADGE).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Quit ━━━ ", Style::default().fg(TEXT_MUTED)),
         Span::styled(
             status_right,
@@ -205,10 +214,16 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
     let mut lines = Vec::new();
     for (sender, text) in &state.chat_messages {
-        let sender_color = if sender == "You" { GOLD_BADGE } else { CYAN_NEON };
+        let sender_color = if sender == "You" {
+            GOLD_BADGE
+        } else {
+            CYAN_NEON
+        };
         lines.push(Line::from(Span::styled(
             format!(" [{}]", sender),
-            Style::default().fg(sender_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(sender_color)
+                .add_modifier(Modifier::BOLD),
         )));
         for row in text.lines() {
             lines.push(Line::from(Span::styled(
@@ -220,7 +235,10 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, state: &DashboardState) {
     }
 
     lines.push(Line::from(vec![
-        Span::styled(" ▸ Prompt > ", Style::default().fg(EMERALD_OK).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " ▸ Prompt > ",
+            Style::default().fg(EMERALD_OK).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             format!("{}█", state.prompt_input),
             Style::default().fg(Color::White),
@@ -247,7 +265,10 @@ fn render_arc_hierarchy(frame: &mut Frame, area: Rect, state: &DashboardState) {
             Span::styled(" L1 VRAM [GPU0+1] ", Style::default().fg(TEXT_MUTED)),
             Span::styled("▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱ ", Style::default().fg(CYAN_NEON)),
             Span::styled(
-                format!("{:.1}/{:.0} GB", state.header.vram_used_gb, state.header.vram_total_gb),
+                format!(
+                    "{:.1}/{:.0} GB",
+                    state.header.vram_used_gb, state.header.vram_total_gb
+                ),
                 Style::default().fg(Color::White),
             ),
         ]),
@@ -289,7 +310,9 @@ fn render_nvme_smart(frame: &mut Frame, area: Rect, state: &DashboardState) {
         .border_style(Style::default().fg(BORDER_SLATE).bg(BG_DARK))
         .title_top(Span::styled(
             "─ NVMe I/O & S.M.A.R.T. [Samsung 990 PRO] ─",
-            Style::default().fg(INDIGO_GLOW).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(INDIGO_GLOW)
+                .add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -338,7 +361,7 @@ fn render_braille_heatmap(frame: &mut Frame, area: Rect, state: &DashboardState)
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let braille_row_1 = if state.tick % 2 == 0 {
+    let braille_row_1 = if state.tick.is_multiple_of(2) {
         " ⠀⢀⣠⣴⣶⣾⣿⣿⣿⣿⣷⣶⣦ "
     } else {
         " ⠀⢀⣠⣴⣾⣿⣿⣿⣿⣿⣿⣷⣦ "
@@ -346,7 +369,10 @@ fn render_braille_heatmap(frame: &mut Frame, area: Rect, state: &DashboardState)
     let lines = vec![
         Line::from(vec![
             Span::styled(braille_row_1, Style::default().fg(CYAN_NEON)),
-            Span::styled("Mode: Code/Rust [Cluster #07]", Style::default().fg(Color::White)),
+            Span::styled(
+                "Mode: Code/Rust [Cluster #07]",
+                Style::default().fg(Color::White),
+            ),
         ]),
         Line::from(vec![
             Span::styled(" ⠀⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀ ", Style::default().fg(INDIGO_GLOW)),
@@ -374,7 +400,10 @@ fn render_ticket_queue(frame: &mut Frame, area: Rect, state: &DashboardState) {
 
     let lines = vec![
         Line::from(vec![
-            Span::styled(" ▸ [ACTIVE] ", Style::default().fg(EMERALD_OK).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " ▸ [ACTIVE] ",
+                Style::default().fg(EMERALD_OK).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 format!(
                     "#01 Generating IoRingQueue (Layer {:02}/{}) ── ETA ~12s",

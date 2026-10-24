@@ -1,18 +1,18 @@
 use apus_core::ENGINE_AUTHOR;
 use axum::{
+    Json, Router,
     extract::State,
     response::{
-        sse::{Event as SseEvent, Sse},
         IntoResponse, Response,
+        sse::{Event as SseEvent, Sse},
     },
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -155,8 +155,7 @@ async fn chat_completions_handler(
 
     let reply_text = format!(
         "[APUS // {} // engineered by mjojo]\nRequest #{req_num} processed via 4KB page-aligned expert streaming pipeline (ARC Hit: 92.4%, MLA Latent KV: 576d, MTP 2x Active).\nResponse to: \"{}\"",
-        model_used,
-        last_prompt
+        model_used, last_prompt
     );
 
     let now = SystemTime::now()
@@ -232,4 +231,64 @@ async fn chat_completions_handler(
         },
     })
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::{Body, to_bytes},
+        extract::Request,
+        http::StatusCode,
+    };
+
+    #[tokio::test]
+    async fn test_openai_api_health_models_and_sse_streaming() {
+        let state = ApiServerState {
+            model_name: "GLM-5.2-744B-Q4_K_M.apus".into(),
+            requests_served: Arc::new(AtomicU64::new(0)),
+        };
+
+        // 1. Test /health & /v1/models handlers
+        let Json(health) = health_handler(State(state.clone())).await;
+        assert_eq!(health.status, "ok");
+        assert_eq!(health.author, "mjojo");
+
+        let Json(models) = list_models_handler(State(state.clone())).await;
+        assert_eq!(models.data.len(), 1);
+
+        // 2. Test /v1/chat/completions (non-streaming JSON)
+        let req_non_stream = ChatCompletionRequest {
+            model: Some("GLM-5.2-744B-Q4_K_M.apus".into()),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "Ping".into(),
+            }],
+            max_tokens: Some(32),
+            stream: Some(false),
+        };
+        let resp = chat_completions_handler(State(state.clone()), Json(req_non_stream)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = to_bytes(resp.into_body(), 8192).await.unwrap();
+        let body_str = String::from_utf8_lossy(&body_bytes);
+        assert!(body_str.contains("chat.completion"));
+
+        // 3. Test /v1/chat/completions (SSE streaming `stream: true`)
+        let req_sse = ChatCompletionRequest {
+            model: Some("GLM-5.2-744B-Q4_K_M.apus".into()),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "Stream test".into(),
+            }],
+            max_tokens: Some(32),
+            stream: Some(true),
+        };
+        let resp_sse = chat_completions_handler(State(state), Json(req_sse)).await;
+        assert_eq!(resp_sse.status(), StatusCode::OK);
+        let sse_bytes = to_bytes(resp_sse.into_body(), 16384).await.unwrap();
+        let sse_str = String::from_utf8_lossy(&sse_bytes);
+        assert!(sse_str.contains("chat.completion.chunk"));
+        assert!(sse_str.contains("data: [DONE]"));
+        let _ = Request::new(Body::empty());
+    }
 }

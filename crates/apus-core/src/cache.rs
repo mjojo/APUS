@@ -209,7 +209,8 @@ impl ArcCache {
     }
 
     fn replace(st: &mut ArcState, in_b2: bool) -> Option<ExpertId> {
-        let evict_from_t1 = !st.t1.is_empty() && ((in_b2 && st.t1.len() == st.p) || (st.t1.len() > st.p));
+        let evict_from_t1 =
+            !st.t1.is_empty() && ((in_b2 && st.t1.len() == st.p) || (st.t1.len() > st.p));
         let victim = if evict_from_t1 {
             let v = st.t1.pop_front();
             if let Some(id) = v {

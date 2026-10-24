@@ -39,7 +39,8 @@ impl HardwareTopologyScanner {
         let estimated_numa_nodes = if logical_cores >= 64 { 2 } else { 1 };
         let ccd_chiplets = if logical_cores >= 16 { 2 } else { 1 };
         let recommended_io_workers = (logical_cores / 4).clamp(2, 8);
-        let recommended_compute_workers = logical_cores.saturating_sub(recommended_io_workers).max(2);
+        let recommended_compute_workers =
+            logical_cores.saturating_sub(recommended_io_workers).max(2);
 
         HardwareTopologyProfile {
             logical_cores,
@@ -61,7 +62,7 @@ impl HardwareTopologyScanner {
             }
             let mask: usize = 1usize << core_index;
             let prev = unsafe { SetThreadAffinityMask(GetCurrentThread(), mask) };
-            return prev != 0;
+            prev != 0
         }
         #[cfg(not(windows))]
         {

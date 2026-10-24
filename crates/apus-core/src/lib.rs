@@ -9,14 +9,14 @@ pub mod slab;
 pub mod stress;
 pub mod topo;
 
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::ptr::NonNull;
 use thiserror::Error;
 
 pub use cache::{ArcCache, ArcTelemetry, CacheTier};
 pub use config::ApusConfig;
 pub use grammar::{GrammarConstraintEngine, GrammarMode};
-pub use mla::{LatentKvToken, MlaKvCache, KV_PAGE_TOKENS, MLA_LATENT_DIM};
+pub use mla::{KV_PAGE_TOKENS, LatentKvToken, MLA_LATENT_DIM, MlaKvCache};
 pub use mtp::{LookAheadPrefetcher, MoERouter, MtpSpeculativeEngine, RoutedExpertSelection};
 pub use profiles::MoEModelPreset;
 pub use sampler::{BpeTokenizer, GenerationSampler, SamplerConfig};
@@ -59,12 +59,16 @@ pub enum ApusError {
     #[error("BLAKE3 cryptographic checksum mismatch for expert ({layer}, {expert})")]
     CorruptedExpertWeights { layer: u16, expert: u16 },
 
-    #[error("System NVMe thermal threshold exceeded ({temp_c}°C) — emergency thermal brake engaged")]
+    #[error(
+        "System NVMe thermal threshold exceeded ({temp_c}°C) — emergency thermal brake engaged"
+    )]
     ThermalThrottleTripped { temp_c: u8 },
 }
 
 /// Unique coordinate identifier for a routed MoE expert
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct ExpertId {
     pub layer: u16,
     pub expert: u16,
@@ -146,7 +150,7 @@ impl PageAlignedSlot {
     /// Verifies that the memory address is strictly a multiple of 4096 bytes
     #[inline]
     pub fn is_page_aligned(&self) -> bool {
-        (self.ptr.as_ptr() as usize) % PAGE_ALIGNMENT == 0
+        (self.ptr.as_ptr() as usize).is_multiple_of(PAGE_ALIGNMENT)
     }
 
     #[inline]
@@ -229,8 +233,14 @@ mod tests {
     #[test]
     fn test_arc_cache_recency_and_frequency() {
         let cache = ArcCache::new(4, 2);
-        let e1 = ExpertId { layer: 0, expert: 1 };
-        let e2 = ExpertId { layer: 0, expert: 2 };
+        let e1 = ExpertId {
+            layer: 0,
+            expert: 1,
+        };
+        let e2 = ExpertId {
+            layer: 0,
+            expert: 2,
+        };
         assert_eq!(cache.access(e1).0, CacheTier::L3NvmeMiss);
         // Second access promotes the expert to T2 and elevates it into L1 VRAM
         assert_eq!(cache.access(e1).0, CacheTier::L2SlabRam);

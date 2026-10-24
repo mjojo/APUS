@@ -45,11 +45,7 @@ impl DualGpuPipeline {
     /// Determines which GPU (GPU 0 or GPU 1) owns execution and L1 VRAM caching for a given expert
     #[inline]
     pub fn target_gpu_for_expert(&self, id: ExpertId) -> usize {
-        if id.layer < self.split_layer {
-            0
-        } else {
-            1
-        }
+        if id.layer < self.split_layer { 0 } else { 1 }
     }
 
     /// Chunked Logits Computation for the output LM Head layer,
@@ -65,7 +61,8 @@ impl DualGpuPipeline {
             for tok in start_tok..end_tok {
                 // Compact projection onto the vocabulary chunk sub-matrix
                 let h_val = final_hidden[tok % final_hidden.len()];
-                let weight = ((tok as f32 * 0.0173).sin()) * 0.8 + ((chunk_idx as f32 * 0.31).cos()) * 0.2;
+                let weight =
+                    ((tok as f32 * 0.0173).sin()) * 0.8 + ((chunk_idx as f32 * 0.31).cos()) * 0.2;
                 let logit = h_val * weight;
                 if logit > best_logit {
                     best_logit = logit;
@@ -117,7 +114,10 @@ impl IoAwareBatchScheduler {
     /// while other tickets await NVMe DMA completion.
     pub fn schedule_next_ready(&self) -> Option<InferenceTicket> {
         let mut q = self.tickets.lock();
-        if let Some(pos) = q.iter().position(|t| t.status == TicketStatus::ReadyInCache) {
+        if let Some(pos) = q
+            .iter()
+            .position(|t| t.status == TicketStatus::ReadyInCache)
+        {
             return q.remove(pos);
         }
         q.pop_front()
@@ -152,7 +152,10 @@ pub struct NodeLayerAssignment {
 }
 
 /// Automatically balances MoE model layers across LAN cluster nodes proportional to memory and compute capacity
-pub fn balance_cluster_layers(nodes: &[ClusterNodeSpec], total_layers: u16) -> Vec<NodeLayerAssignment> {
+pub fn balance_cluster_layers(
+    nodes: &[ClusterNodeSpec],
+    total_layers: u16,
+) -> Vec<NodeLayerAssignment> {
     if nodes.is_empty() || total_layers == 0 {
         return Vec::new();
     }
@@ -172,7 +175,9 @@ pub fn balance_cluster_layers(nodes: &[ClusterNodeSpec], total_layers: u16) -> V
         let share = if idx + 1 == nodes.len() {
             total_layers - current_layer
         } else {
-            ((scores[idx] / total_score) * (total_layers as f32)).round().max(1.0) as u16
+            ((scores[idx] / total_score) * (total_layers as f32))
+                .round()
+                .max(1.0) as u16
         };
         let end_layer = (current_layer + share - 1).min(total_layers - 1);
         assignments.push(NodeLayerAssignment {
@@ -191,8 +196,8 @@ pub fn balance_cluster_layers(nodes: &[ClusterNodeSpec], total_layers: u16) -> V
 pub struct ExpertParallelReplicator {
     num_gpus: usize,
     hot_threshold: u64,
-    activation_counts: Mutex< std::collections::HashMap<ExpertId, u64> >,
-    replicas: Mutex< std::collections::HashMap<ExpertId, Vec<usize>> >,
+    activation_counts: Mutex<std::collections::HashMap<ExpertId, u64>>,
+    replicas: Mutex<std::collections::HashMap<ExpertId, Vec<usize>>>,
     gpu_load: Mutex<Vec<u64>>,
 }
 
@@ -267,8 +272,20 @@ mod tests {
     #[test]
     fn test_dual_gpu_pipeline_routing_and_chunked_lm_head() {
         let pipe = DualGpuPipeline::new(75, 37, true, 65_536);
-        assert_eq!(pipe.target_gpu_for_expert(ExpertId { layer: 10, expert: 5 }), 0);
-        assert_eq!(pipe.target_gpu_for_expert(ExpertId { layer: 40, expert: 5 }), 1);
+        assert_eq!(
+            pipe.target_gpu_for_expert(ExpertId {
+                layer: 10,
+                expert: 5
+            }),
+            0
+        );
+        assert_eq!(
+            pipe.target_gpu_for_expert(ExpertId {
+                layer: 40,
+                expert: 5
+            }),
+            1
+        );
 
         let hidden = vec![1.0f32; 128];
         let (tok, logit) = pipe.compute_chunked_lm_head_argmax(&hidden);
@@ -313,7 +330,10 @@ mod tests {
         let _ = ep.route_and_maybe_replicate(hot_exp);
         let _ = ep.route_and_maybe_replicate(hot_exp);
         let (_gpu, replicated) = ep.route_and_maybe_replicate(hot_exp);
-        assert!(replicated, "Hot expert should be dynamically cloned on 3rd hit");
+        assert!(
+            replicated,
+            "Hot expert should be dynamically cloned on 3rd hit"
+        );
         assert!(ep.replica_gpus(hot_exp).len() >= 2);
     }
 
@@ -322,9 +342,8 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
 
-        let worker = tokio::spawn(async move {
-            LanRpcNode::serve_one_hop(listener, 25).await.unwrap()
-        });
+        let worker =
+            tokio::spawn(async move { LanRpcNode::serve_one_hop(listener, 25).await.unwrap() });
 
         let hidden = vec![0.5f32, -0.25, 0.75, 0.1];
         let pkt = Fp8ActivationPacket::from_hidden_state(99, 10, &hidden);

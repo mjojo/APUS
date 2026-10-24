@@ -1,7 +1,7 @@
 pub mod shaders;
 
 use apus_core::{ApusError, ComputeBackend, PageAlignedSlot};
-pub use shaders::{GDeflateCodec, GDEFLATE_MAGIC, WGSL_INT4_SWIGLU_SHADER};
+pub use shaders::{GDEFLATE_MAGIC, GDeflateCodec, WGSL_INT4_SWIGLU_SHADER};
 
 /// Hardware SIMD / GPU compute accelerator capability tier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,18 +179,18 @@ impl ComputeBackend for ApusComputeEngine {
         // and accumulate weighted SwiGLU response: output += gate_weight * (SiLU(W_gate * x) * (W_up * x))
         for &(slot, gate_weight) in experts {
             let raw = slot.as_slice();
-            let mut row_idx = 0usize;
 
-            for block in raw.chunks_exact(20) {
+            for (row_idx, block) in raw.chunks_exact(20).enumerate() {
                 if row_idx >= dim {
                     break;
                 }
                 let scale_raw = f32::from_le_bytes([block[0], block[1], block[2], block[3]]);
-                let scale = if scale_raw.is_finite() && scale_raw.abs() > 1e-9 && scale_raw.abs() < 100.0 {
-                    scale_raw
-                } else {
-                    0.02
-                };
+                let scale =
+                    if scale_raw.is_finite() && scale_raw.abs() > 1e-9 && scale_raw.abs() < 100.0 {
+                        scale_raw
+                    } else {
+                        0.02
+                    };
 
                 let (gate_proj, up_proj) = {
                     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -216,7 +216,6 @@ impl ComputeBackend for ApusComputeEngine {
 
                 let swiglu = Self::silu(gate_proj) * up_proj;
                 output[row_idx] += gate_weight * swiglu;
-                row_idx += 1;
             }
         }
 

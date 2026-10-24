@@ -49,11 +49,11 @@ impl ConcurrencyStressRunner {
                     if let Some(victim) = evicted {
                         arena_cl.evict(&victim);
                     }
-                    if tier == CacheTier::L3NvmeMiss {
-                        if let Ok(slot_arc) = arena_cl.acquire_slot(id) {
-                            let mut guard = slot_arc.lock();
-                            guard.as_mut_slice()[0] = (step & 0xFF) as u8;
-                        }
+                    if tier == CacheTier::L3NvmeMiss
+                        && let Ok(slot_arc) = arena_cl.acquire_slot(id)
+                    {
+                        let mut guard = slot_arc.lock();
+                        guard.as_mut_slice()[0] = (step & 0xFF) as u8;
                     }
                 }
             }));
@@ -67,8 +67,7 @@ impl ConcurrencyStressRunner {
         let total_operations = (threads * ops_per_thread) as u64;
         let ops_per_sec = (total_operations as f64) / elapsed.as_secs_f64().max(1e-6);
         let telemetry = cache.telemetry();
-        let slab_invariant_passed =
-            arena.used_slots() + arena.free_slots_count() >= slab_slots;
+        let slab_invariant_passed = arena.used_slots() + arena.free_slots_count() >= slab_slots;
 
         Ok(StressReport {
             worker_threads: threads,

@@ -1,4 +1,4 @@
-use crate::format::{ApusFileHeader, LbaExpertEntry, APUS_MAGIC, AUTHOR_SIGNATURE};
+use crate::format::{APUS_MAGIC, AUTHOR_SIGNATURE, ApusFileHeader, LbaExpertEntry};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::Path;

@@ -1,18 +1,18 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
-    Frame,
 };
 
 // Premium Truecolor Palette (Cyberpunk / Aerospace HUD)
-pub const BG_DARK: Color = Color::Rgb(13, 15, 23);       // #0D0F17 — Deep Obsidian
-pub const BORDER_SLATE: Color = Color::Rgb(56, 65, 82);  // #384152 — Muted Steel
-pub const CYAN_NEON: Color = Color::Rgb(0, 240, 255);    // #00F0FF — APUS Neon Cyan Accent
+pub const BG_DARK: Color = Color::Rgb(13, 15, 23); // #0D0F17 — Deep Obsidian
+pub const BORDER_SLATE: Color = Color::Rgb(56, 65, 82); // #384152 — Muted Steel
+pub const CYAN_NEON: Color = Color::Rgb(0, 240, 255); // #00F0FF — APUS Neon Cyan Accent
 pub const INDIGO_GLOW: Color = Color::Rgb(123, 97, 255); // #7B61FF — Secondary Indigo Gradient
-pub const GOLD_BADGE: Color = Color::Rgb(255, 184, 0);   // #FFB800 — mjojo Author Badge Accent
-pub const EMERALD_OK: Color = Color::Rgb(0, 230, 118);   // #00E676 — Nominal Telemetry Status
+pub const GOLD_BADGE: Color = Color::Rgb(255, 184, 0); // #FFB800 — mjojo Author Badge Accent
+pub const EMERALD_OK: Color = Color::Rgb(0, 230, 118); // #00E676 — Nominal Telemetry Status
 pub const TEXT_MUTED: Color = Color::Rgb(148, 163, 184); // #94A3B8 — Metric Labels
 
 #[derive(Debug, Clone)]
@@ -51,7 +51,10 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TelemetryHeaderState
                 Span::styled("━ ", Style::default().fg(BORDER_SLATE)),
                 Span::styled(
                     " APUS // ULTRA-STREAMING MoE ",
-                    Style::default().fg(BG_DARK).bg(CYAN_NEON).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(BG_DARK)
+                        .bg(CYAN_NEON)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" ━ ", Style::default().fg(BORDER_SLATE)),
                 Span::styled(
@@ -104,7 +107,9 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TelemetryHeaderState
             Span::styled("  ◥ █▀ ", Style::default().fg(CYAN_NEON)),
             Span::styled(
                 "█▀█ █▀▀ █▄█ ▄█",
-                Style::default().fg(INDIGO_GLOW).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(INDIGO_GLOW)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" by mjojo", Style::default().fg(GOLD_BADGE)),
         ]),
@@ -143,7 +148,9 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TelemetryHeaderState
             Span::styled("▸ I/O PATH :: ", Style::default().fg(TEXT_MUTED)),
             Span::styled(
                 &state.io_mode,
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
@@ -153,7 +160,10 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &TelemetryHeaderState
                 Style::default().fg(temp_color).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("│ VRAM: {:.1}/{:.0} GB", state.vram_used_gb, state.vram_total_gb),
+                format!(
+                    "│ VRAM: {:.1}/{:.0} GB",
+                    state.vram_used_gb, state.vram_total_gb
+                ),
                 Style::default().fg(TEXT_MUTED),
             ),
         ]),

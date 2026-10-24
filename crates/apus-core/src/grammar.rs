@@ -72,16 +72,19 @@ impl GrammarConstraintEngine {
         }
 
         // Prevent closing brace '}' when brace_depth <= 0 outside of string literals
-        if !self.in_string && self.brace_depth <= 0 {
-            if let Some(close_id) = tokenizer.token_id("}") {
-                if let Some(slot) = logits.get_mut(close_id as usize) {
-                    *slot = f32::NEG_INFINITY;
-                }
-            }
+        if !self.in_string
+            && self.brace_depth <= 0
+            && let Some(close_id) = tokenizer.token_id("}")
+            && let Some(slot) = logits.get_mut(close_id as usize)
+        {
+            *slot = f32::NEG_INFINITY;
         }
     }
 
     pub fn is_complete_json(&self) -> bool {
-        self.mode == GrammarMode::JsonObject && self.started && self.brace_depth == 0 && !self.in_string
+        self.mode == GrammarMode::JsonObject
+            && self.started
+            && self.brace_depth == 0
+            && !self.in_string
     }
 }

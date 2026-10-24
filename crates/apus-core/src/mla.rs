@@ -121,18 +121,26 @@ impl MlaKvCache {
     }
 
     /// Restores the latent KV-cache from a `*.roost` binary payload
-    pub fn from_bytes(bytes: &[u8], sink_tokens_keep: usize, vram_hot_window_tokens: usize) -> Self {
+    pub fn from_bytes(
+        bytes: &[u8],
+        sink_tokens_keep: usize,
+        vram_hot_window_tokens: usize,
+    ) -> Self {
         let mut cache = Self::new(sink_tokens_keep, vram_hot_window_tokens);
         let mut cursor = 0;
         while cursor + 10 <= bytes.len() {
             let token_id = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
             let scale = f32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap());
-            let len = u16::from_le_bytes(bytes[cursor + 8..cursor + 10].try_into().unwrap()) as usize;
+            let len =
+                u16::from_le_bytes(bytes[cursor + 8..cursor + 10].try_into().unwrap()) as usize;
             cursor += 10;
             if cursor + len > bytes.len() {
                 break;
             }
-            let latent_fp8: Vec<i8> = bytes[cursor..cursor + len].iter().map(|&b| b as i8).collect();
+            let latent_fp8: Vec<i8> = bytes[cursor..cursor + len]
+                .iter()
+                .map(|&b| b as i8)
+                .collect();
             cursor += len;
             cache.hot_vram_tokens.push(LatentKvToken {
                 token_id,

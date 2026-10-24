@@ -16,10 +16,7 @@ pub struct Fp8ActivationPacket {
 impl Fp8ActivationPacket {
     /// Compresses an FP32 hidden state slice into an FP8/INT8 LAN packet
     pub fn from_hidden_state(ticket_id: u64, next_layer: u16, hidden: &[f32]) -> Self {
-        let max_abs = hidden
-            .iter()
-            .fold(0.0f32, |m, &v| m.max(v.abs()))
-            .max(1e-6);
+        let max_abs = hidden.iter().fold(0.0f32, |m, &v| m.max(v.abs())).max(1e-6);
         let scale = max_abs / 127.0;
         let quantized_activations = hidden
             .iter()
@@ -112,8 +109,9 @@ impl LanRpcNode {
         let mut req_buf = vec![0u8; req_len];
         socket.read_exact(&mut req_buf).await?;
 
-        let pkt = Fp8ActivationPacket::from_wire_bytes(&req_buf)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Malformed FP8 RPC packet"))?;
+        let pkt = Fp8ActivationPacket::from_wire_bytes(&req_buf).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Malformed FP8 RPC packet")
+        })?;
 
         let mut hidden = pkt.into_hidden_state();
         for v in &mut hidden {

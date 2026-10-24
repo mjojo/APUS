@@ -29,6 +29,12 @@ jobs:
       - name: Cache Cargo registry & target
         uses: Swatinem/rust-cache@v2
 
+      - name: Check formatting (rustfmt)
+        run: cargo fmt --all -- --check
+
+      - name: Lint workspace (clippy)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
       - name: Run workspace unit & integration tests
         run: cargo test --workspace --all-targets
 

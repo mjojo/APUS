@@ -5,25 +5,25 @@ use std::{
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
+    Frame, Terminal,
     backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Sparkline},
-    Frame, Terminal,
 };
 
 // Aerospace Truecolor Palette for APUS
-pub const BG_VOID: Color = Color::Rgb(9, 11, 16);          // #090B10 — Outer Void Background
-pub const BG_PANEL: Color = Color::Rgb(14, 17, 26);        // #0E111A — Inner Obsidian Panel
-pub const BORDER_DIM: Color = Color::Rgb(45, 55, 72);      // #2D3748 — Steel Frame Border
-pub const CYAN_NEON: Color = Color::Rgb(0, 240, 255);      // #00F0FF — APUS Signature Cyan
-pub const INDIGO_DEEP: Color = Color::Rgb(123, 97, 255);   // #7B61FF — Deep Indigo Glow
-pub const GOLD_MJOJO: Color = Color::Rgb(255, 184, 0);     // #FFB800 — Gold mjojo Badge
-pub const EMERALD_OK: Color = Color::Rgb(0, 230, 118);     // #00E676 — Verification Passed
+pub const BG_VOID: Color = Color::Rgb(9, 11, 16); // #090B10 — Outer Void Background
+pub const BG_PANEL: Color = Color::Rgb(14, 17, 26); // #0E111A — Inner Obsidian Panel
+pub const BORDER_DIM: Color = Color::Rgb(45, 55, 72); // #2D3748 — Steel Frame Border
+pub const CYAN_NEON: Color = Color::Rgb(0, 240, 255); // #00F0FF — APUS Signature Cyan
+pub const INDIGO_DEEP: Color = Color::Rgb(123, 97, 255); // #7B61FF — Deep Indigo Glow
+pub const GOLD_MJOJO: Color = Color::Rgb(255, 184, 0); // #FFB800 — Gold mjojo Badge
+pub const EMERALD_OK: Color = Color::Rgb(0, 230, 118); // #00E676 — Verification Passed
 pub const TEXT_PRIMARY: Color = Color::Rgb(226, 232, 240); // #E2E8F0 — Primary Telemetry Text
-pub const TEXT_MUTED: Color = Color::Rgb(100, 116, 139);   // #64748B — Technical Captions
+pub const TEXT_MUTED: Color = Color::Rgb(100, 116, 139); // #64748B — Technical Captions
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BootStage {
@@ -150,7 +150,10 @@ pub fn build_gradient_bar(width: usize, progress: f32, tick: u64) -> Line<'stati
         } else if i == filled_exact + 1 && progress < 1.0 {
             spans.push(Span::styled("▒", Style::default().fg(INDIGO_DEEP)));
         } else {
-            spans.push(Span::styled("░", Style::default().fg(Color::Rgb(28, 34, 48))));
+            spans.push(Span::styled(
+                "░",
+                Style::default().fg(Color::Rgb(28, 34, 48)),
+            ));
         }
     }
     Line::from(spans)
@@ -184,7 +187,10 @@ pub fn render_splash(frame: &mut Frame, state: &SplashScreenState) {
                 Span::styled("━ ", Style::default().fg(BORDER_DIM)),
                 Span::styled(
                     " APUS // BOOTSTRAP TELEMETRY ",
-                    Style::default().fg(BG_VOID).bg(CYAN_NEON).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(BG_VOID)
+                        .bg(CYAN_NEON)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" ━ [Space/Esc] Skip ", Style::default().fg(TEXT_MUTED)),
             ])
@@ -222,33 +228,52 @@ pub fn render_splash(frame: &mut Frame, state: &SplashScreenState) {
     let wing_c2 = lerp_rgb((123, 97, 255), (0, 240, 255), pulse);
     let logo_lines = vec![
         Line::from(vec![
-            Span::styled("            ◣                 ", Style::default().fg(wing_c1)),
+            Span::styled(
+                "            ◣                 ",
+                Style::default().fg(wing_c1),
+            ),
             Span::styled(
                 "▄▀█ █▀█ █ █ █▀",
                 Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "   ASYNC PAGED ULTRA-STREAMING",
-                Style::default().fg(TEXT_PRIMARY).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
-            Span::styled("           ██ ◣                ", Style::default().fg(wing_c1)),
+            Span::styled(
+                "           ██ ◣                ",
+                Style::default().fg(wing_c1),
+            ),
             Span::styled(
                 "█▀█ █▀▀ █▄█ ▄█",
-                Style::default().fg(INDIGO_DEEP).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(INDIGO_DEEP)
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("   744B MoE Inference Runtime", Style::default().fg(TEXT_MUTED)),
+            Span::styled(
+                "   744B MoE Inference Runtime",
+                Style::default().fg(TEXT_MUTED),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("     ◣     ████ ◣               ", Style::default().fg(CYAN_NEON)),
+            Span::styled(
+                "     ◣     ████ ◣               ",
+                Style::default().fg(CYAN_NEON),
+            ),
             Span::styled(
                 "────────────────────────────────────────────────",
                 Style::default().fg(BORDER_DIM),
             ),
         ]),
         Line::from(vec![
-            Span::styled("    ███▄▄███████▄▄           ", Style::default().fg(CYAN_NEON)),
+            Span::styled(
+                "    ███▄▄███████▄▄           ",
+                Style::default().fg(CYAN_NEON),
+            ),
             Span::styled("AUTHOR   :: ", Style::default().fg(TEXT_MUTED)),
             Span::styled(
                 " mjojo ",
@@ -262,13 +287,19 @@ pub fn render_splash(frame: &mut Frame, state: &SplashScreenState) {
             Span::styled("Zero-Copy DMA", Style::default().fg(TEXT_PRIMARY)),
         ]),
         Line::from(vec![
-            Span::styled("     ▀▀██████████▀           ", Style::default().fg(wing_c2)),
+            Span::styled(
+                "     ▀▀██████████▀           ",
+                Style::default().fg(wing_c2),
+            ),
             Span::styled("MODEL    :: ", Style::default().fg(TEXT_MUTED)),
             Span::styled("GLM-5.2-744B-Q4_K_M.apus ", Style::default().fg(CYAN_NEON)),
             Span::styled("(MLA + MTP 2x)", Style::default().fg(INDIGO_DEEP)),
         ]),
         Line::from(vec![
-            Span::styled("         ▀▀████▀             ", Style::default().fg(INDIGO_DEEP)),
+            Span::styled(
+                "         ▀▀████▀             ",
+                Style::default().fg(INDIGO_DEEP),
+            ),
             Span::styled("TOPOLOGY :: ", Style::default().fg(TEXT_MUTED)),
             Span::styled(
                 "2x GPU P2P Pipeline + 24 GB Pinned Slab RAM",
@@ -319,7 +350,10 @@ pub fn render_splash(frame: &mut Frame, state: &SplashScreenState) {
             Span::styled(" ▸ BLAKE3 TREE   ::", Style::default().fg(TEXT_MUTED)),
             blake_badge,
             Span::styled(
-                format!("{:>5} / {} Experts ", state.verified_experts, state.total_experts),
+                format!(
+                    "{:>5} / {} Experts ",
+                    state.verified_experts, state.total_experts
+                ),
                 Style::default().fg(TEXT_PRIMARY),
             ),
             Span::styled(
@@ -421,14 +455,12 @@ pub fn run_boot_splash<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()>
             .draw(|f| render_splash(f, &state))
             .map_err(|e| io::Error::other(e.to_string()))?;
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press
-                    && matches!(key.code, KeyCode::Esc | KeyCode::Char(' ') | KeyCode::Enter)
-                {
-                    return Ok(());
-                }
-            }
+        if event::poll(timeout)?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+            && matches!(key.code, KeyCode::Esc | KeyCode::Char(' ') | KeyCode::Enter)
+        {
+            return Ok(());
         }
         if last_tick.elapsed() >= tick_rate {
             state.on_tick();

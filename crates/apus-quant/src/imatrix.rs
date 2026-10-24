@@ -46,7 +46,11 @@ impl QuantizerInt4 {
             let mut padded = [0.0f32; QUANT_GROUP_SIZE];
             for (i, &w) in chunk.iter().enumerate() {
                 let imp = imatrix
-                    .and_then(|im| im.channel_importance.get(g_idx * QUANT_GROUP_SIZE + i).copied())
+                    .and_then(|im| {
+                        im.channel_importance
+                            .get(g_idx * QUANT_GROUP_SIZE + i)
+                            .copied()
+                    })
                     .unwrap_or(1.0);
                 // Salient channel precision boost
                 padded[i] = w * imp.powf(0.05);
@@ -105,7 +109,11 @@ impl QuantizerInt2 {
             let mut padded = [0.0f32; QUANT_GROUP_SIZE];
             for (i, &w) in chunk.iter().enumerate() {
                 let imp = imatrix
-                    .and_then(|im| im.channel_importance.get(g_idx * QUANT_GROUP_SIZE + i).copied())
+                    .and_then(|im| {
+                        im.channel_importance
+                            .get(g_idx * QUANT_GROUP_SIZE + i)
+                            .copied()
+                    })
                     .unwrap_or(1.0);
                 padded[i] = w * imp.powf(0.05);
             }

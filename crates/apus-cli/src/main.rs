@@ -3,8 +3,8 @@ mod server;
 use apus_backends::{ApusComputeEngine, ComputeAccelerator};
 use apus_core::{
     ApusConfig, ArcCache, CacheTier, ComputeBackend, ConcurrencyStressRunner, ExpertStorage,
-    HardwareTopologyScanner, LookAheadPrefetcher, MlaKvCache, MoEModelPreset, MoERouter,
-    MtpSpeculativeEngine, SlabArena, MLA_LATENT_DIM,
+    HardwareTopologyScanner, LookAheadPrefetcher, MLA_LATENT_DIM, MlaKvCache, MoEModelPreset,
+    MoERouter, MtpSpeculativeEngine, SlabArena,
 };
 use apus_io::{
     ApusBlockStorage, ChunkedHubDownloader, IoPriorityClass, OsDriveQosController,
@@ -15,20 +15,20 @@ use apus_quant::{
     ApusConverter, ApusFileHeader, ImatrixCalibrator, QuantizationQualityAuditor, QuantizerInt4,
     RoostSnapshot, SourceExpert,
 };
-use apus_tui::{render_dashboard, run_boot_splash, DashboardState};
+use apus_tui::{DashboardState, render_dashboard, run_boot_splash};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
-use server::{build_openai_router, ApiServerState};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use server::{ApiServerState, build_openai_router};
 use std::{
     env,
     fs::File,
     io,
     path::Path,
-    sync::{atomic::AtomicU64, Arc},
+    sync::{Arc, atomic::AtomicU64},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -43,14 +43,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .get(2)
                 .map(|s| s.as_str())
                 .unwrap_or("glm-5.2-744b-q4.apus");
-            let layers: u32 = args
-                .get(3)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(4);
-            let experts_per_layer: u32 = args
-                .get(4)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(8);
+            let layers: u32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(4);
+            let experts_per_layer: u32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(8);
             cmd_convert(output, layers, experts_per_layer)?;
         }
         "inspect" => {
@@ -88,10 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cmd_profiles();
         }
         "serve" => {
-            let port: u16 = args
-                .get(2)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(8080);
+            let port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8080);
             cmd_serve(port).await?;
         }
         "run" | "tui" => {
@@ -189,9 +180,16 @@ fn cmd_inspect(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("│ Magic Bytes     : APUS (v{})", version);
     println!("│ Author Sig      : {}", header.author_str());
     println!("│ Model ID        : {}", header.model_id_str());
-    println!("│ Topology        : {} layers, {} routed experts", total_layers, total_experts);
+    println!(
+        "│ Topology        : {} layers, {} routed experts",
+        total_layers, total_experts
+    );
     println!("│ Dense Base Size : {} bytes (4KB aligned)", dense_size);
-    println!("│ LBA Offset Table: offset 0x{:08X} ({} entries x 16 bytes)", lba_offset, lba_entries.len());
+    println!(
+        "│ LBA Offset Table: offset 0x{:08X} ({} entries x 16 bytes)",
+        lba_offset,
+        lba_entries.len()
+    );
     println!("│ BLAKE3 Root Tag : 0x{:016X}", blake3_root);
 
     let all_aligned = lba_entries
@@ -207,7 +205,10 @@ fn cmd_inspect(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 async fn cmd_bench(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !Path::new(path).exists() {
-        println!("[APUS Bench] File '{}' not found, building reference container...", path);
+        println!(
+            "[APUS Bench] File '{}' not found, building reference container...",
+            path
+        );
         cmd_convert(path, 4, 8)?;
     }
 
@@ -232,7 +233,8 @@ async fn cmd_bench(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let router = MoERouter::new(experts_per_layer, 2);
     let prefetcher = LookAheadPrefetcher::new(total_layers, experts_per_layer, 2);
     let compute = ApusComputeEngine::new_auto();
-    let pipeline = DualGpuPipeline::new(total_layers.max(2), (total_layers / 2).max(1), true, 32_768);
+    let pipeline =
+        DualGpuPipeline::new(total_layers.max(2), (total_layers / 2).max(1), true, 32_768);
     let mtp = MtpSpeculativeEngine::new(2, 32_768);
 
     println!(
@@ -265,8 +267,15 @@ async fn cmd_bench(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
                 let slot_arc = slab_arena.acquire_slot(sel.id)?;
                 if tier == CacheTier::L3NvmeMiss {
-                    let mut guard = slot_arc.lock();
-                    storage.read_expert_into_slot(sel.id, &mut guard).await?;
+                    let mut temp_slot =
+                        apus_core::PageAlignedSlot::new(slab_arena.slot_size_bytes())?;
+                    storage
+                        .read_expert_into_slot(sel.id, &mut temp_slot)
+                        .await?;
+                    slot_arc
+                        .lock()
+                        .as_mut_slice()
+                        .copy_from_slice(temp_slot.as_slice());
                 }
                 locked_slots.push((slot_arc, sel.gate_weight));
             }
@@ -372,7 +381,11 @@ fn cmd_audit() -> Result<(), Box<dyn std::error::Error>> {
             r.sqnr_db,
             r.cosine_similarity,
             r.estimated_perplexity_delta,
-            if r.passed_quality_gate { "PASS" } else { "WARN" }
+            if r.passed_quality_gate {
+                "PASS"
+            } else {
+                "WARN"
+            }
         );
     }
     println!("╰────────────────────────────────────────────────────────────────────╯");
@@ -422,7 +435,9 @@ fn cmd_stress() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_profiles() {
-    println!("╭─── APUS Supported Frontier MoE Profiles (engineered by mjojo) ─────────────────────╮");
+    println!(
+        "╭─── APUS Supported Frontier MoE Profiles (engineered by mjojo) ─────────────────────╮"
+    );
     for p in MoEModelPreset::catalog() {
         println!(
             "│ {:<28} │ {:>4.0}B/{:>2.0}B │ {:>2}L x {:>3}E (Top-{}) │ {:<20} │ {:>5.1} GB │",
@@ -436,7 +451,9 @@ fn cmd_profiles() {
             p.disk_size_int4_gb
         );
     }
-    println!("╰────────────────────────────────────────────────────────────────────────────────────╯");
+    println!(
+        "╰────────────────────────────────────────────────────────────────────────────────────╯"
+    );
 }
 
 async fn cmd_serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
@@ -490,43 +507,38 @@ fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
                 .map_err(|e| io::Error::other(e.to_string()))?;
 
             let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-            if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
-                        match key.code {
-                            KeyCode::Esc => {
-                                return Ok(());
-                            }
-                            KeyCode::Char('q') | KeyCode::Char('Q')
-                                if dash.prompt_input.is_empty() =>
-                            {
-                                return Ok(());
-                            }
-                            KeyCode::Char('s') | KeyCode::Char('S')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                dash.snapshot_saved_banner =
-                                    Some("Snapshot coding_rust.roost saved! [OK]".into());
-                            }
-                            KeyCode::Char('t') | KeyCode::Char('T')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                dash.toggle_nvme_cap();
-                            }
-                            KeyCode::Enter => {
-                                dash.submit_prompt();
-                            }
-                            KeyCode::Backspace => {
-                                dash.prompt_input.pop();
-                            }
-                            KeyCode::Char(c)
-                                if !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                dash.prompt_input.push(c);
-                            }
-                            _ => {}
-                        }
+            if event::poll(timeout)?
+                && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+            {
+                match key.code {
+                    KeyCode::Esc => {
+                        return Ok(());
                     }
+                    KeyCode::Char('q') | KeyCode::Char('Q') if dash.prompt_input.is_empty() => {
+                        return Ok(());
+                    }
+                    KeyCode::Char('s') | KeyCode::Char('S')
+                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        dash.snapshot_saved_banner =
+                            Some("Snapshot coding_rust.roost saved! [OK]".into());
+                    }
+                    KeyCode::Char('t') | KeyCode::Char('T')
+                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        dash.toggle_nvme_cap();
+                    }
+                    KeyCode::Enter => {
+                        dash.submit_prompt();
+                    }
+                    KeyCode::Backspace => {
+                        dash.prompt_input.pop();
+                    }
+                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        dash.prompt_input.push(c);
+                    }
+                    _ => {}
                 }
             }
             if last_tick.elapsed() >= tick_rate {

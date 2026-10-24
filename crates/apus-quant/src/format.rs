@@ -62,9 +62,8 @@ impl ApusFileHeader {
         }
 
         // Materialize packed header struct from buffer
-        let header = unsafe {
-            std::ptr::read_unaligned(header_buf.as_ptr() as *const ApusFileHeader)
-        };
+        let header =
+            unsafe { std::ptr::read_unaligned(header_buf.as_ptr() as *const ApusFileHeader) };
         Ok(header)
     }
 
@@ -95,9 +94,7 @@ impl ApusFileHeader {
         let mut buf = [0u8; std::mem::size_of::<LbaExpertEntry>()];
         for _ in 0..count {
             file.read_exact(&mut buf)?;
-            let entry = unsafe {
-                std::ptr::read_unaligned(buf.as_ptr() as *const LbaExpertEntry)
-            };
+            let entry = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const LbaExpertEntry) };
             entries.push(entry);
         }
         Ok(entries)
@@ -175,13 +172,14 @@ impl RoostSnapshot {
         if &header_buf[0..4] != ROOST_MAGIC {
             return Err(FormatError::InvalidMagic);
         }
-        if !header_buf[8..32].starts_with(&ROOST_AUTHOR_SIGNATURE[..24.min(ROOST_AUTHOR_SIGNATURE.len())]) {
+        if !header_buf[8..32]
+            .starts_with(&ROOST_AUTHOR_SIGNATURE[..24.min(ROOST_AUTHOR_SIGNATURE.len())])
+        {
             return Err(FormatError::InvalidAuthorSignature);
         }
 
-        let header = unsafe {
-            std::ptr::read_unaligned(header_buf.as_ptr() as *const RoostSessionHeader)
-        };
+        let header =
+            unsafe { std::ptr::read_unaligned(header_buf.as_ptr() as *const RoostSessionHeader) };
 
         let warm_count = header.warm_experts_count as usize;
         let mut warm_experts = Vec::with_capacity(warm_count);

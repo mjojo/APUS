@@ -27,8 +27,9 @@ pub struct ApusIdxManifest {
 
 impl ApusIdxManifest {
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ApusError> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| ApusError::AllocationFailed(format!("Failed to serialize .apus.idx: {e}")))?;
+        let json = serde_json::to_string_pretty(self).map_err(|e| {
+            ApusError::AllocationFailed(format!("Failed to serialize .apus.idx: {e}"))
+        })?;
         fs::write(path, json)
             .map_err(|e| ApusError::AllocationFailed(format!("Failed to write .apus.idx: {e}")))
     }
@@ -73,11 +74,12 @@ impl ChunkedHubDownloader {
                     source: e,
                 })?;
             let mut buf = vec![0u8; entry.compressed_size as usize];
-            file.read_exact(&mut buf).map_err(|e| ApusError::StorageIo {
-                layer: entry.layer_id,
-                expert: entry.expert_id,
-                source: e,
-            })?;
+            file.read_exact(&mut buf)
+                .map_err(|e| ApusError::StorageIo {
+                    layer: entry.layer_id,
+                    expert: entry.expert_id,
+                    source: e,
+                })?;
             let h = blake3::hash(&buf);
             tree.update(h.as_bytes());
             chunks.push(HubChunkDescriptor {
@@ -154,6 +156,7 @@ impl ChunkedHubDownloader {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(target_path.as_ref())
             .map_err(|e| ApusError::StorageIo {
                 layer: descriptor.layer_id,

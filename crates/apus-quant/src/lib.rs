@@ -5,15 +5,15 @@ pub mod imatrix;
 pub mod safetensors;
 
 pub use audit::{QuantizationAuditReport, QuantizationQualityAuditor};
-pub use converter::{align_to_page, pad_file_to, ApusConverter, ConverterError, SourceExpert};
+pub use converter::{ApusConverter, ConverterError, SourceExpert, align_to_page, pad_file_to};
 pub use format::{
-    ApusFileHeader, FormatError, LbaExpertEntry, RoostSessionHeader, RoostSnapshot, APUS_MAGIC,
-    AUTHOR_SIGNATURE, ROOST_AUTHOR_SIGNATURE, ROOST_MAGIC,
+    APUS_MAGIC, AUTHOR_SIGNATURE, ApusFileHeader, FormatError, LbaExpertEntry,
+    ROOST_AUTHOR_SIGNATURE, ROOST_MAGIC, RoostSessionHeader, RoostSnapshot,
 };
-pub use imatrix::{ImatrixCalibrator, QuantizerInt2, QuantizerInt4, QUANT_GROUP_SIZE};
+pub use imatrix::{ImatrixCalibrator, QUANT_GROUP_SIZE, QuantizerInt2, QuantizerInt4};
 pub use safetensors::{
-    classify_moe_tensor_name, GgufHeaderSummary, MoETensorRole, SafetensorDescriptor,
-    SafetensorsMoEParser, GGUF_MAGIC,
+    GGUF_MAGIC, GgufHeaderSummary, MoETensorRole, SafetensorDescriptor, SafetensorsMoEParser,
+    classify_moe_tensor_name,
 };
 
 #[cfg(test)]
@@ -71,8 +71,14 @@ mod tests {
             timestamp: 1_761_318_000,
             context_tokens: 48_200,
             warm_experts: vec![
-                ExpertId { layer: 0, expert: 7 },
-                ExpertId { layer: 42, expert: 128 },
+                ExpertId {
+                    layer: 0,
+                    expert: 7,
+                },
+                ExpertId {
+                    layer: 42,
+                    expert: 128,
+                },
             ],
             compressed_mla_kv: vec![1, 2, 3, 4, 5, 6, 7, 8],
         };
@@ -80,7 +86,13 @@ mod tests {
         let loaded = RoostSnapshot::load_from_file(&path).expect("load roost failed");
         assert_eq!(loaded.context_tokens, 48_200);
         assert_eq!(loaded.warm_experts.len(), 2);
-        assert_eq!(loaded.warm_experts[1], ExpertId { layer: 42, expert: 128 });
+        assert_eq!(
+            loaded.warm_experts[1],
+            ExpertId {
+                layer: 42,
+                expert: 128
+            }
+        );
         assert_eq!(loaded.compressed_mla_kv, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
         let _ = std::fs::remove_file(&path);
@@ -99,7 +111,9 @@ mod tests {
 
     #[test]
     fn test_int2_quantizer_and_safetensors_parser() {
-        let original: Vec<f32> = (0..64).map(|i| if i % 2 == 0 { 1.2 } else { -1.2 }).collect();
+        let original: Vec<f32> = (0..64)
+            .map(|i| if i % 2 == 0 { 1.2 } else { -1.2 })
+            .collect();
         let packed2 = QuantizerInt2::quantize(&original, None);
         let unpacked2 = QuantizerInt2::dequantize(&packed2, original.len());
         assert_eq!(unpacked2.len(), original.len());

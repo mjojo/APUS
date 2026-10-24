@@ -168,10 +168,38 @@ impl BpeTokenizer {
 
         // High-frequency systems programming subword tokens
         let subwords = [
-            "pub ", "fn ", "struct ", "impl ", "async ", "await", "unsafe ", "mut ", "let ",
-            "Result", "Apus", "Expert", "NVMe", "DirectStorage", "io_uring", "O_DIRECT", "BLAKE3",
-            "PageAlignedSlot", "SlabArena", "ArcCache", "MlaKvCache", "mjojo", " -> ", "::",
-            "    ", "\n", "4096", "INT4", "VRAM", "RAM", "QoS", "DMA",
+            "pub ",
+            "fn ",
+            "struct ",
+            "impl ",
+            "async ",
+            "await",
+            "unsafe ",
+            "mut ",
+            "let ",
+            "Result",
+            "Apus",
+            "Expert",
+            "NVMe",
+            "DirectStorage",
+            "io_uring",
+            "O_DIRECT",
+            "BLAKE3",
+            "PageAlignedSlot",
+            "SlabArena",
+            "ArcCache",
+            "MlaKvCache",
+            "mjojo",
+            " -> ",
+            "::",
+            "    ",
+            "\n",
+            "4096",
+            "INT4",
+            "VRAM",
+            "RAM",
+            "QoS",
+            "DMA",
         ];
         for sw in subwords {
             if !vocab_to_id.contains_key(sw) {
@@ -203,10 +231,8 @@ impl BpeTokenizer {
             let mut matched = None;
             // Check multi-char tokens (starting from token index 256)
             for (id, piece) in self.id_to_vocab.iter().enumerate().skip(256) {
-                if rest.starts_with(piece) {
-                    if matched.map_or(true, |(_, len)| piece.len() > len) {
-                        matched = Some((id as u32, piece.len()));
-                    }
+                if rest.starts_with(piece) && matched.is_none_or(|(_, len)| piece.len() > len) {
+                    matched = Some((id as u32, piece.len()));
                 }
             }
             if let Some((id, len)) = matched {

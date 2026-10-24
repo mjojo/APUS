@@ -15,7 +15,11 @@ pub struct SlabArena {
 
 impl SlabArena {
     /// Pre-allocates a pool of 4KB-aligned slots in system RAM
-    pub fn new(slot_size_bytes: usize, capacity_slots: usize, lock_in_ram: bool) -> Result<Self, ApusError> {
+    pub fn new(
+        slot_size_bytes: usize,
+        capacity_slots: usize,
+        lock_in_ram: bool,
+    ) -> Result<Self, ApusError> {
         let mut free_slots = Vec::with_capacity(capacity_slots);
         for _ in 0..capacity_slots {
             let mut slot = PageAlignedSlot::new(slot_size_bytes)?;

@@ -30,7 +30,9 @@ impl MoERouter {
                 let mut score = 0.0f32;
                 let stride = (expert_idx as usize % 13) + 1;
                 for (i, &val) in hidden_state.iter().step_by(stride).take(32).enumerate() {
-                    let phase = ((layer as usize * 31 + expert_idx as usize * 17 + i * 7) % 100) as f32 * 0.0628;
+                    let phase = ((layer as usize * 31 + expert_idx as usize * 17 + i * 7) % 100)
+                        as f32
+                        * 0.0628;
                     score += val * phase.cos();
                 }
                 (expert_idx, score)
@@ -41,7 +43,11 @@ impl MoERouter {
         let top_k = &logits[..self.active_top_k.min(logits.len())];
 
         let max_logit = top_k.first().map(|x| x.1).unwrap_or(0.0);
-        let exp_sum: f32 = top_k.iter().map(|(_, s)| (s - max_logit).exp()).sum::<f32>().max(1e-6);
+        let exp_sum: f32 = top_k
+            .iter()
+            .map(|(_, s)| (s - max_logit).exp())
+            .sum::<f32>()
+            .max(1e-6);
 
         top_k
             .iter()
@@ -97,7 +103,10 @@ impl LookAheadPrefetcher {
         }
         unique_experts
             .into_iter()
-            .map(|(l, e)| ExpertId { layer: l, expert: e })
+            .map(|(l, e)| ExpertId {
+                layer: l,
+                expert: e,
+            })
             .collect()
     }
 }

@@ -2,7 +2,7 @@ pub mod hub;
 pub mod qos;
 pub mod thermal;
 
-use apus_core::{ApusError, ExpertId, ExpertStorage, PageAlignedSlot, PAGE_ALIGNMENT};
+use apus_core::{ApusError, ExpertId, ExpertStorage, PAGE_ALIGNMENT, PageAlignedSlot};
 use apus_quant::{ApusFileHeader, LbaExpertEntry};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -73,11 +73,12 @@ impl ApusBlockStorage {
                     source: e,
                 })?;
             let mut buf = vec![0u8; entry.compressed_size as usize];
-            file.read_exact(&mut buf).map_err(|e| ApusError::StorageIo {
-                layer: id.layer,
-                expert: id.expert,
-                source: e,
-            })?;
+            file.read_exact(&mut buf)
+                .map_err(|e| ApusError::StorageIo {
+                    layer: id.layer,
+                    expert: id.expert,
+                    source: e,
+                })?;
             expected_hashes.insert(id, blake3::hash(&buf));
             lba_index.insert(id, entry);
         }
@@ -118,14 +119,21 @@ impl ExpertStorage for ApusBlockStorage {
             tokio::time::sleep(thermal_delay).await;
         }
 
-        let entry = self.lba_index.get(&id).copied().ok_or_else(|| ApusError::StorageIo {
-            layer: id.layer,
-            expert: id.expert,
-            source: std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Expert ({}, {}) not found in LBA offset table", id.layer, id.expert),
-            ),
-        })?;
+        let entry = self
+            .lba_index
+            .get(&id)
+            .copied()
+            .ok_or_else(|| ApusError::StorageIo {
+                layer: id.layer,
+                expert: id.expert,
+                source: std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!(
+                        "Expert ({}, {}) not found in LBA offset table",
+                        id.layer, id.expert
+                    ),
+                ),
+            })?;
 
         let read_len = (entry.compressed_size as usize).min(slot.size());
         debug_assert_eq!(entry.file_offset % (PAGE_ALIGNMENT as u64), 0);
@@ -137,11 +145,12 @@ impl ExpertStorage for ApusBlockStorage {
         }
 
         // 3. Stream 4KB-aligned expert block directly into PageAlignedSlot via unbuffered Direct I/O
-        let mut file = open_unbuffered_direct_file(&self.path).map_err(|e| ApusError::StorageIo {
-            layer: id.layer,
-            expert: id.expert,
-            source: e,
-        })?;
+        let mut file =
+            open_unbuffered_direct_file(&self.path).map_err(|e| ApusError::StorageIo {
+                layer: id.layer,
+                expert: id.expert,
+                source: e,
+            })?;
         file.seek(SeekFrom::Start(entry.file_offset))
             .map_err(|e| ApusError::StorageIo {
                 layer: id.layer,
@@ -210,7 +219,7 @@ pub fn open_unbuffered_direct_file(path: &Path) -> std::io::Result<File> {
     File::open(path)
 }
 
-/// 2. `MmapStorage` Engine — "Speed King" Mode (Zero-Copy Virtual Memory Projection via `memmap2`)
+/// `MmapStorage` Engine — "Speed King" Mode (Zero-Copy Virtual Memory Projection via `memmap2`).
 /// Ideal for dedicated (non-OS) NVMe drives and Apple Silicon Unified Memory.
 pub struct MmapStorage {
     mmap: memmap2::Mmap,
@@ -276,11 +285,18 @@ impl ExpertStorage for MmapStorage {
         id: ExpertId,
         slot: &mut PageAlignedSlot,
     ) -> Result<(), ApusError> {
-        let entry = self.lba_index.get(&id).copied().ok_or_else(|| ApusError::StorageIo {
-            layer: id.layer,
-            expert: id.expert,
-            source: std::io::Error::new(std::io::ErrorKind::NotFound, "Expert missing in mmap LBA"),
-        })?;
+        let entry = self
+            .lba_index
+            .get(&id)
+            .copied()
+            .ok_or_else(|| ApusError::StorageIo {
+                layer: id.layer,
+                expert: id.expert,
+                source: std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Expert missing in mmap LBA",
+                ),
+            })?;
 
         let start = entry.file_offset as usize;
         let len = (entry.compressed_size as usize).min(slot.size());
@@ -338,11 +354,19 @@ impl ExpertStorage for KvCompressedStorage {
         id: ExpertId,
         slot: &mut PageAlignedSlot,
     ) -> Result<(), ApusError> {
-        let data = self.store.lock().get(&id).cloned().ok_or_else(|| ApusError::StorageIo {
-            layer: id.layer,
-            expert: id.expert,
-            source: std::io::Error::new(std::io::ErrorKind::NotFound, "Expert not found in KV store"),
-        })?;
+        let data = self
+            .store
+            .lock()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| ApusError::StorageIo {
+                layer: id.layer,
+                expert: id.expert,
+                source: std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Expert not found in KV store",
+                ),
+            })?;
         let copy_len = data.len().min(slot.size());
         slot.as_mut_slice()[..copy_len].copy_from_slice(&data[..copy_len]);
         Ok(())
@@ -388,7 +412,13 @@ mod tests {
 
         let mut slot = PageAlignedSlot::new(4096).expect("slot failed");
         storage
-            .read_expert_into_slot(ExpertId { layer: 0, expert: 1 }, &mut slot)
+            .read_expert_into_slot(
+                ExpertId {
+                    layer: 0,
+                    expert: 1,
+                },
+                &mut slot,
+            )
             .await
             .expect("read expert failed");
         assert_eq!(slot.as_slice()[0], 0x99);
@@ -397,15 +427,30 @@ mod tests {
         // Verify emergency thermal brake when sensor reaches >= 70°C
         thermal.update_sensor_temp(72);
         let err = storage
-            .read_expert_into_slot(ExpertId { layer: 0, expert: 0 }, &mut slot)
+            .read_expert_into_slot(
+                ExpertId {
+                    layer: 0,
+                    expert: 0,
+                },
+                &mut slot,
+            )
             .await;
-        assert!(matches!(err, Err(ApusError::ThermalThrottleTripped { temp_c: 72 })));
+        assert!(matches!(
+            err,
+            Err(ApusError::ThermalThrottleTripped { temp_c: 72 })
+        ));
 
         // Verify zero-copy MmapStorage on the same .apus container
         let mmap_storage = MmapStorage::open(&tmp_path).expect("open mmap storage failed");
         let mut mmap_slot = PageAlignedSlot::new(4096).expect("mmap slot failed");
         mmap_storage
-            .read_expert_into_slot(ExpertId { layer: 0, expert: 0 }, &mut mmap_slot)
+            .read_expert_into_slot(
+                ExpertId {
+                    layer: 0,
+                    expert: 0,
+                },
+                &mut mmap_slot,
+            )
             .await
             .expect("mmap read failed");
         assert_eq!(mmap_slot.as_slice()[0], 0x42);

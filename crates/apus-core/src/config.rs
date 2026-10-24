@@ -157,8 +157,9 @@ impl ApusConfig {
     }
 
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ApusError> {
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| ApusError::AllocationFailed(format!("Failed to serialize apus.toml: {e}")))?;
+        let content = toml::to_string_pretty(self).map_err(|e| {
+            ApusError::AllocationFailed(format!("Failed to serialize apus.toml: {e}"))
+        })?;
         fs::write(path, content)
             .map_err(|e| ApusError::AllocationFailed(format!("Failed to write apus.toml: {e}")))
     }

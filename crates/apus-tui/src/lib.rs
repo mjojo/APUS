@@ -2,17 +2,17 @@ pub mod dashboard;
 pub mod header;
 pub mod splash;
 
-pub use dashboard::{render_dashboard, DashboardState};
-pub use header::{render_header, TelemetryHeaderState};
+pub use dashboard::{DashboardState, render_dashboard};
+pub use header::{TelemetryHeaderState, render_header};
 pub use splash::{
-    build_gradient_bar, centered_rect, lerp_rgb, render_splash, run_boot_splash, BootStage,
-    SplashScreenState,
+    BootStage, SplashScreenState, build_gradient_bar, centered_rect, lerp_rgb, render_splash,
+    run_boot_splash,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn test_splash_and_dashboard_render_without_panic() {

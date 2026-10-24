@@ -18,7 +18,11 @@ pub struct QuantizationAuditReport {
 pub struct QuantizationQualityAuditor;
 
 impl QuantizationQualityAuditor {
-    pub fn evaluate_pair(format_name: &str, reference: &[f32], reconstructed: &[f32]) -> QuantizationAuditReport {
+    pub fn evaluate_pair(
+        format_name: &str,
+        reference: &[f32],
+        reconstructed: &[f32],
+    ) -> QuantizationAuditReport {
         let n = reference.len().min(reconstructed.len()).max(1);
         let mut signal_power = 0.0f64;
         let mut noise_power = 0.0f64;
@@ -62,7 +66,10 @@ impl QuantizationQualityAuditor {
         }
     }
 
-    pub fn audit_int4_and_int2(reference: &[f32], imatrix: Option<&ImatrixCalibrator>) -> (QuantizationAuditReport, QuantizationAuditReport) {
+    pub fn audit_int4_and_int2(
+        reference: &[f32],
+        imatrix: Option<&ImatrixCalibrator>,
+    ) -> (QuantizationAuditReport, QuantizationAuditReport) {
         let q4_packed = QuantizerInt4::quantize(reference, imatrix);
         let q4_rec = QuantizerInt4::dequantize(&q4_packed, reference.len());
         let rep4 = Self::evaluate_pair("INT4_K_M (imatrix)", reference, &q4_rec);

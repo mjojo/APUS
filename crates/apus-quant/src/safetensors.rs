@@ -58,18 +58,18 @@ pub fn classify_moe_tensor_name(name: &str) -> MoETensorRole {
     // Hugging Face convention: "model.layers.12.mlp.experts.45.gate_proj.weight"
     if let Some(layers_pos) = name.find("layers.") {
         let after_layers = &name[layers_pos + 7..];
-        if let Some(dot1) = after_layers.find('.') {
-            if let Ok(layer_id) = after_layers[..dot1].parse::<u16>() {
-                if let Some(exp_pos) = after_layers.find("experts.") {
-                    // Exclude shared_experts (which must stay pinned in the dense backbone)
-                    if !after_layers.contains("shared_experts") {
-                        let after_exp = &after_layers[exp_pos + 8..];
-                        let end = after_exp.find('.').unwrap_or(after_exp.len());
-                        if let Ok(expert_id) = after_exp[..end].parse::<u16>() {
-                            return MoETensorRole::RoutedExpert { layer_id, expert_id };
-                        }
-                    }
-                }
+        if let Some(dot1) = after_layers.find('.')
+            && let Ok(layer_id) = after_layers[..dot1].parse::<u16>()
+            && let Some(exp_pos) = after_layers.find("experts.")
+            && !after_layers.contains("shared_experts")
+        {
+            let after_exp = &after_layers[exp_pos + 8..];
+            let end = after_exp.find('.').unwrap_or(after_exp.len());
+            if let Ok(expert_id) = after_exp[..end].parse::<u16>() {
+                return MoETensorRole::RoutedExpert {
+                    layer_id,
+                    expert_id,
+                };
             }
         }
     }
@@ -144,7 +144,10 @@ impl SafetensorsMoEParser {
                 MoETensorRole::DenseBackbone => {
                     dense_weights.extend_from_slice(slice);
                 }
-                MoETensorRole::RoutedExpert { layer_id, expert_id } => {
+                MoETensorRole::RoutedExpert {
+                    layer_id,
+                    expert_id,
+                } => {
                     let entry = routed_map.entry((layer_id, expert_id)).or_default();
                     for chunk in slice.chunks_exact(4) {
                         entry.push(f32::from_le_bytes(chunk.try_into().unwrap()));
