@@ -17,10 +17,16 @@ pub struct ApusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineSection {
     pub author: String,
+    #[serde(default = "default_models_dir")]
+    pub models_dir: String,
     pub model_path: String,
     pub session_roost_path: String,
     pub storage_backend: String,
     pub quant_format: String,
+}
+
+fn default_models_dir() -> String {
+    "./models".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,7 +98,8 @@ impl Default for ApusConfig {
         Self {
             engine: EngineSection {
                 author: "mjojo".into(),
-                model_path: "glm-5.2-744b-q4.apus".into(),
+                models_dir: "./models".into(),
+                model_path: "./models/glm-5.2-744b-q4.apus".into(),
                 session_roost_path: "coding_rust.roost".into(),
                 storage_backend: "block".into(),
                 quant_format: "int4_imatrix".into(),

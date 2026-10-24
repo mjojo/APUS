@@ -43,6 +43,8 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "sysinfo",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "tracing",

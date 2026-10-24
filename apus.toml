@@ -1,6 +1,7 @@
 [engine]
 author = "mjojo"
-model_path = "glm-5.2-744b-q4.apus"
+models_dir = "./models"
+model_path = "./models/glm-5.2-744b-q4.apus"
 session_roost_path = "coding_rust.roost"
 storage_backend = "block"
 quant_format = "int4_imatrix"

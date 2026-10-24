@@ -169,13 +169,20 @@ cd apus-moe
 cargo test
 ```
 
-### 2. Generate an Auto-Tuned Hardware, RAM (`sysinfo`), NUMA/CCD & QoS Profile (`apus.toml`)
+### 2. First-Launch OOBE Wizard & Model Location Resolution (`apus wizard`)
+
+When APUS starts for the first time and `apus.toml` does not exist yet, it automatically triggers the **First-Launch Initialization Wizard (`init.rs`)**:
+1. **RAM Probing (`sysinfo`):** Queries total and available RAM, reserves 15% (`4–12 GB`) for the host OS, and assigns the remaining RAM to the 4KB Pinned L2 Slab Arena.
+2. **Physical Disk & Volume Probing (`sysinfo::Disks`):** Enumerates all mounted drives (distinguishing `NVMe / SSD` from `HDD / Legacy` and checking free gigabytes for 300+ GB `.apus` containers).
+3. **Deterministic Model Path Resolution (`resolve_model_path`):** APUS locates `.apus` model containers in the following priority order:
+   * **Priority 1 (CLI argument):** Explicit file path passed to `apus run <path/to/model.apus>`, `apus serve 8080 <path/to/model.apus>`, `apus bench <path>`, or `apus inspect <path>`.
+   * **Priority 2 (Environment variables):** `APUS_MODEL_PATH` (exact `.apus` file) or `APUS_MODELS_DIR` (directory on any NVMe drive, e.g. `D:\APUS_Models`).
+   * **Priority 3 (`apus.toml` configuration):** `engine.model_path` or automatic discovery of the first `*.apus` container inside `engine.models_dir`.
 
 ```bash
-cargo run --release --bin apus -- wizard apus.toml
+# Run OOBE Wizard and optionally point the models directory to a dedicated NVMe drive:
+cargo run --release --bin apus -- wizard apus.toml "C:/APUS_Models"
 ```
-
-Queries physical and available RAM via `sysinfo`, reserves 15% (`4–12 GB`) for the host OS to prevent OOM, allocates the remaining memory to the 4KB Pinned L2 Slab Arena, and automatically selects the optimal MoE preset (`DeepSeek-V3-671B`, `GLM-5.2-744B`, or `Mixtral-8x22B`).
 
 ### 3. Import Upstream Hugging Face `.safetensors` / `.gguf` or Pack Synthetic MoE Weights
 

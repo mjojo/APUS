@@ -1,11 +1,12 @@
+mod init;
 mod runtime;
 mod server;
 
 use apus_backends::{ApusComputeEngine, ComputeAccelerator};
 use apus_core::{
-    ApusConfig, ArcCache, CacheTier, ComputeBackend, ConcurrencyStressRunner, ExpertStorage,
+    ArcCache, CacheTier, ComputeBackend, ConcurrencyStressRunner, ExpertStorage,
     HardwareTopologyScanner, LookAheadPrefetcher, MLA_LATENT_DIM, MlaKvCache, MoEModelPreset,
-    MoERouter, MtpSpeculativeEngine, SlabArena, detect_system_hardware,
+    MoERouter, MtpSpeculativeEngine, SlabArena,
 };
 use apus_io::{
     ApusBlockStorage, ChunkedHubDownloader, IoPriorityClass, OsDriveQosController,
@@ -37,15 +38,22 @@ use std::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Automatically run First-Launch OOBE Initialization if `apus.toml` does not exist yet
+    let default_cfg_path = Path::new("apus.toml");
+    if !default_cfg_path.exists() {
+        let _ = init::ensure_system_initialized(default_cfg_path, None, false)?;
+    }
+
     let args: Vec<String> = env::args().collect();
     let command = args.get(1).map(|s| s.as_str()).unwrap_or("help");
 
     match command {
         "convert" => {
+            let resolved_default = init::resolve_model_path(None, default_cfg_path);
             let output = args
                 .get(2)
                 .map(|s| s.as_str())
-                .unwrap_or("glm-5.2-744b-q4.apus");
+                .unwrap_or_else(|| resolved_default.to_str().unwrap_or("glm-5.2-744b-q4.apus"));
             let layers: u32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(4);
             let experts_per_layer: u32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(8);
             cmd_convert(output, layers, experts_per_layer)?;
@@ -62,32 +70,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cmd_import_upstream(src, dst)?;
         }
         "inspect" => {
-            let path = args
-                .get(2)
-                .map(|s| s.as_str())
-                .unwrap_or("glm-5.2-744b-q4.apus");
-            cmd_inspect(path)?;
+            let resolved =
+                init::resolve_model_path(args.get(2).map(|s| s.as_str()), default_cfg_path);
+            cmd_inspect(&resolved.to_string_lossy())?;
         }
         "bench" => {
-            let path = args
-                .get(2)
-                .map(|s| s.as_str())
-                .unwrap_or("glm-5.2-744b-q4.apus");
-            cmd_bench(path).await?;
+            let resolved =
+                init::resolve_model_path(args.get(2).map(|s| s.as_str()), default_cfg_path);
+            cmd_bench(&resolved.to_string_lossy()).await?;
         }
         "wizard" | "init" => {
             let cfg_path = args.get(2).map(|s| s.as_str()).unwrap_or("apus.toml");
-            cmd_wizard(cfg_path)?;
+            let custom_dir = args.get(3).map(Path::new);
+            cmd_wizard(cfg_path, custom_dir)?;
         }
         "audit" => {
             cmd_audit()?;
         }
         "manifest" | "pull" => {
-            let path = args
-                .get(2)
-                .map(|s| s.as_str())
-                .unwrap_or("glm-5.2-744b-q4.apus");
-            cmd_manifest_and_verify(path)?;
+            let resolved =
+                init::resolve_model_path(args.get(2).map(|s| s.as_str()), default_cfg_path);
+            cmd_manifest_and_verify(&resolved.to_string_lossy())?;
         }
         "stress" => {
             cmd_stress()?;
@@ -97,11 +100,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         "serve" => {
             let port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8080);
-            cmd_serve(port).await?;
+            let model_arg = args.get(3).map(|s| s.as_str());
+            cmd_serve(port, model_arg).await?;
         }
         "run" | "tui" => {
             let headless = args.iter().any(|a| a == "--headless");
-            cmd_run_tui(headless).await?;
+            let model_arg = args
+                .iter()
+                .skip(2)
+                .find(|a| !a.starts_with("--"))
+                .map(|s| s.as_str());
+            cmd_run_tui(headless, model_arg).await?;
         }
         _ => {
             print_banner();
@@ -117,6 +126,7 @@ fn print_banner() {
     println!("│  █▀█ █▀▀ █▄█ ▄█   744B MoE SSD Inference Runtime ── engineered by mjojo      │");
     println!("├──────────────────────────────────────────────────────────────────────────────┤");
     println!("│  CLI Commands:                                                               │");
+    println!("│    apus wizard   [apus.toml] [models_dir]      OOBE Hardware & Disk Wizard   │");
     println!("│    apus convert  [out.apus] [layers] [experts] Pack weights into 4K .apus    │");
     println!("│    apus import   [in.safetensors|.gguf] [out]  Import HF/GGUF into 4K .apus  │");
     println!("│    apus inspect  [file.apus]                   Verify header, LBA & BLAKE3   │");
@@ -125,9 +135,11 @@ fn print_banner() {
     println!("│    apus manifest [file.apus]                   Build/verify .apus.idx chunks │");
     println!("│    apus stress                                 Multi-thread ARC/Slab stress  │");
     println!("│    apus profiles                               List supported MoE presets    │");
-    println!("│    apus wizard   [apus.toml]                   Hardware & Disk QoS auto-tuner│");
-    println!("│    apus run      [--headless]                  Launch 60 FPS Telemetry TUI   │");
-    println!("│    apus serve    [port]                        Start OpenAI HTTP API (axum)  │");
+    println!("│    apus run      [file.apus] [--headless]      Launch 60 FPS Telemetry TUI   │");
+    println!("│    apus serve    [port] [file.apus]            Start OpenAI HTTP API (axum)  │");
+    println!("├──────────────────────────────────────────────────────────────────────────────┤");
+    println!("│  Model Path Resolution Priority:                                             │");
+    println!("│    1) CLI argument  2) APUS_MODEL_PATH env  3) apus.toml (models_dir)        │");
     println!("╰──────────────────────────────────────────────────────────────────────────────╯");
 }
 
@@ -456,48 +468,22 @@ async fn cmd_bench(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn cmd_wizard(cfg_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!("╭─── APUS Hardware Wizard [authored by mjojo] ───────────────────────╮");
-    println!("│ Scanning system physical RAM, NUMA topology, and PCIe lanes...     │");
-
+fn cmd_wizard(
+    cfg_path: &str,
+    custom_models_dir: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _audit = init::ensure_system_initialized(Path::new(cfg_path), custom_models_dir, true)?;
     let accel = ComputeAccelerator::detect_host_cpu();
     let topo = HardwareTopologyScanner::probe_host();
     let pinned_core0 = HardwareTopologyScanner::pin_current_thread_to_core(0);
-    let ram_profile = detect_system_hardware()?;
-
-    println!("├────────────────────────────────────────────────────────────────────┤");
     println!(
-        "│ Detected Total RAM  : {:>6.1} GB                                    │",
-        ram_profile.total_ram_gb
+        "[APUS Topology] {} logical cores, {} NUMA node(s), {} CCD(s) | Accelerator: {} | Core0 Pin: {}",
+        topo.logical_cores,
+        topo.estimated_numa_nodes,
+        topo.ccd_chiplets,
+        accel.label(),
+        pinned_core0
     );
-    println!(
-        "│ Available for APUS  : {:>6.1} GB                                    │",
-        ram_profile.available_ram_gb
-    );
-    println!(
-        "│ OS Reserved (QoS)   : {:>6.1} GB (15% Anti-OOM Guard)               │",
-        ram_profile.os_reserved_gb
-    );
-    println!(
-        "│ L2 Slab Cache       : {:>6.1} GB (4KB Pinned RAM / VirtualLock)     │",
-        ram_profile.recommended_l2_slab_gb
-    );
-    println!(
-        "│ CPU / NUMA Topology : {:>2} cores, {} NUMA, {} CCD (Core0 Pin: {:<5})   │",
-        topo.logical_cores, topo.estimated_numa_nodes, topo.ccd_chiplets, pinned_core0
-    );
-    println!("│ Compute Accelerator : {:<44} │", accel.label());
-    println!(
-        "│ Recommended Preset  : {:<44} │",
-        ram_profile.recommended_preset
-    );
-    println!("╰────────────────────────────────────────────────────────────────────╯");
-
-    let mut config = ApusConfig::default();
-    config.model.name = ram_profile.recommended_preset.clone();
-    config.memory.ram_slab_gb = (ram_profile.recommended_l2_slab_gb * 10.0).round() / 10.0;
-    config.save_to_file(cfg_path)?;
-    println!("[APUS] Auto-tuned configuration written to '{}'.", cfg_path);
     Ok(())
 }
 
@@ -591,8 +577,16 @@ fn cmd_profiles() {
     );
 }
 
-async fn cmd_serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let runtime_path = std::env::temp_dir().join("apus_live_server.apus");
+async fn cmd_serve(
+    port: u16,
+    model_override: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resolved_path = init::resolve_model_path(model_override, Path::new("apus.toml"));
+    let runtime_path = if resolved_path.exists() {
+        resolved_path
+    } else {
+        std::env::temp_dir().join("apus_live_server.apus")
+    };
     let runtime = Arc::new(ApusRuntimeSession::open_or_create(&runtime_path)?);
     let state = ApiServerState {
         model_name: format!("{}.apus", runtime.model_name()),
@@ -602,15 +596,25 @@ async fn cmd_serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let app = build_openai_router(state);
     let addr = format!("127.0.0.1:{port}");
     println!(
-        "[APUS OpenAI Server // by mjojo] Listening on http://{addr} (/v1/chat/completions, /v1/models, /health)"
+        "[APUS OpenAI Server // by mjojo] Mounted model: '{}' | Listening on http://{addr}",
+        runtime_path.display()
     );
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
 
-async fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let runtime_path = std::env::temp_dir().join("apus_live_tui.apus");
+async fn cmd_run_tui(
+    headless: bool,
+    model_override: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resolved_path = init::resolve_model_path(model_override, Path::new("apus.toml"));
+    let using_temp = !resolved_path.exists();
+    let runtime_path = if using_temp {
+        std::env::temp_dir().join("apus_live_tui.apus")
+    } else {
+        resolved_path
+    };
     let runtime = Arc::new(ApusRuntimeSession::open_or_create(&runtime_path)?);
 
     if headless {
@@ -658,7 +662,9 @@ async fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
         println!("\n=== [2/2] APUS TELEMETRY HUD CAPTURE (LIVE RUNTIME + CTRL+T + CTRL+S) ===");
         print!("{hud_frame}");
         println!("[APUS TUI // by mjojo] Full interactive E2E TUI simulation verified.");
-        let _ = std::fs::remove_file(&runtime_path);
+        if using_temp {
+            let _ = std::fs::remove_file(&runtime_path);
+        }
         return Ok(());
     }
 
@@ -769,7 +775,9 @@ async fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
-    let _ = std::fs::remove_file(&runtime_path);
+    if using_temp {
+        let _ = std::fs::remove_file(&runtime_path);
+    }
     res?;
     Ok(())
 }
