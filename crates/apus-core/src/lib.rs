@@ -3,8 +3,10 @@ pub mod config;
 pub mod grammar;
 pub mod mla;
 pub mod mtp;
+pub mod profiles;
 pub mod sampler;
 pub mod slab;
+pub mod stress;
 pub mod topo;
 
 use std::alloc::{alloc, dealloc, Layout};
@@ -16,8 +18,10 @@ pub use config::ApusConfig;
 pub use grammar::{GrammarConstraintEngine, GrammarMode};
 pub use mla::{LatentKvToken, MlaKvCache, KV_PAGE_TOKENS, MLA_LATENT_DIM};
 pub use mtp::{LookAheadPrefetcher, MoERouter, MtpSpeculativeEngine, RoutedExpertSelection};
+pub use profiles::MoEModelPreset;
 pub use sampler::{BpeTokenizer, GenerationSampler, SamplerConfig};
 pub use slab::SlabArena;
+pub use stress::{ConcurrencyStressRunner, StressReport};
 pub use topo::{HardwareTopologyProfile, HardwareTopologyScanner, PcieLinkTopology};
 
 #[cfg(windows)]

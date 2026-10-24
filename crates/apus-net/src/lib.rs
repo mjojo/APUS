@@ -1,7 +1,11 @@
+pub mod rpc;
+
 use apus_core::ExpertId;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+
+pub use rpc::{Fp8ActivationPacket, LanRpcNode};
 
 /// Inter-GPU activation transfer link mode in Pipeline Parallelism
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,5 +315,24 @@ mod tests {
         let (_gpu, replicated) = ep.route_and_maybe_replicate(hot_exp);
         assert!(replicated, "Hot expert should be dynamically cloned on 3rd hit");
         assert!(ep.replica_gpus(hot_exp).len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn test_lan_rpc_fp8_activation_pipeline_hop() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        let worker = tokio::spawn(async move {
+            LanRpcNode::serve_one_hop(listener, 25).await.unwrap()
+        });
+
+        let hidden = vec![0.5f32, -0.25, 0.75, 0.1];
+        let pkt = Fp8ActivationPacket::from_hidden_state(99, 10, &hidden);
+        let resp = LanRpcNode::send_and_receive(&addr, &pkt).await.unwrap();
+        let worker_out = worker.await.unwrap();
+
+        assert_eq!(resp.ticket_id, 99);
+        assert_eq!(resp.next_layer, 35);
+        assert_eq!(resp.next_layer, worker_out.next_layer);
     }
 }

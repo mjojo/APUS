@@ -1,4 +1,7 @@
+pub mod shaders;
+
 use apus_core::{ApusError, ComputeBackend, PageAlignedSlot};
+pub use shaders::{GDeflateCodec, GDEFLATE_MAGIC, WGSL_INT4_SWIGLU_SHADER};
 
 /// Hardware SIMD / GPU compute accelerator capability tier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,5 +250,11 @@ mod tests {
 
         assert!(out.iter().all(|v| v.is_finite()));
         assert!(out.iter().any(|&v| (v - 0.5).abs() > 1e-5));
+
+        // Verify GDeflate lossless codec and WGSL shader definition
+        assert!(WGSL_INT4_SWIGLU_SHADER.contains("@compute @workgroup_size(64)"));
+        let compressed = GDeflateCodec::compress(slot.as_slice());
+        let restored = GDeflateCodec::decompress(&compressed).expect("decompress failed");
+        assert_eq!(restored, slot.as_slice());
     }
 }

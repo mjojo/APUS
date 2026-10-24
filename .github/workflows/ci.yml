@@ -1,0 +1,43 @@
+name: APUS CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Build, Test & Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo registry & target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run workspace unit & integration tests
+        run: cargo test --workspace --all-targets
+
+      - name: Verify CLI end-to-end pipeline
+        run: |
+          cargo run --bin apus -- convert ci-test.apus 2 4
+          cargo run --bin apus -- inspect ci-test.apus
+          cargo run --bin apus -- bench ci-test.apus
+          cargo run --bin apus -- audit
+          cargo run --bin apus -- stress
+          cargo run --bin apus -- profiles
+          cargo run --bin apus -- run --headless

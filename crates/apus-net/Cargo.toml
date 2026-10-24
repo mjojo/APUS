@@ -10,4 +10,5 @@ description = "APUS Multi-GPU Pipeline Parallelism (2x 8GB VRAM), P2P DMA, I/O-A
 apus-core.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
+tokio.workspace = true
 tracing.workspace = true

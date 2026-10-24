@@ -2,8 +2,9 @@ mod server;
 
 use apus_backends::{ApusComputeEngine, ComputeAccelerator};
 use apus_core::{
-    ApusConfig, ArcCache, CacheTier, ComputeBackend, ExpertStorage, HardwareTopologyScanner,
-    LookAheadPrefetcher, MlaKvCache, MoERouter, MtpSpeculativeEngine, SlabArena, MLA_LATENT_DIM,
+    ApusConfig, ArcCache, CacheTier, ComputeBackend, ConcurrencyStressRunner, ExpertStorage,
+    HardwareTopologyScanner, LookAheadPrefetcher, MlaKvCache, MoEModelPreset, MoERouter,
+    MtpSpeculativeEngine, SlabArena, MLA_LATENT_DIM,
 };
 use apus_io::{
     ApusBlockStorage, ChunkedHubDownloader, IoPriorityClass, OsDriveQosController,
@@ -80,6 +81,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or("glm-5.2-744b-q4.apus");
             cmd_manifest_and_verify(path)?;
         }
+        "stress" => {
+            cmd_stress()?;
+        }
+        "profiles" | "models" => {
+            cmd_profiles();
+        }
         "serve" => {
             let port: u16 = args
                 .get(2)
@@ -110,6 +117,8 @@ fn print_banner() {
     println!("│    apus bench    [file.apus]                   Full SSD streaming benchmark  │");
     println!("│    apus audit                                  SQNR/Perplexity quant audit   │");
     println!("│    apus manifest [file.apus]                   Build/verify .apus.idx chunks │");
+    println!("│    apus stress                                 Multi-thread ARC/Slab stress  │");
+    println!("│    apus profiles                               List supported MoE presets    │");
     println!("│    apus wizard   [apus.toml]                   Hardware & Disk QoS auto-tuner│");
     println!("│    apus run      [--headless]                  Launch 60 FPS Telemetry TUI   │");
     println!("│    apus serve    [port]                        Start OpenAI HTTP API (axum)  │");
@@ -386,6 +395,48 @@ fn cmd_manifest_and_verify(path: &str) -> Result<(), Box<dyn std::error::Error>>
         missing.len()
     );
     Ok(())
+}
+
+fn cmd_stress() -> Result<(), Box<dyn std::error::Error>> {
+    let report = ConcurrencyStressRunner::run_stress_test(8, 2_500, 32)?;
+    println!("╭─── APUS Concurrency & Slab Invariant Stress Test (by mjojo) ───────╮");
+    println!(
+        "│ Worker Threads      : {} OS threads ({} total expert accesses)",
+        report.worker_threads, report.total_operations
+    );
+    println!(
+        "│ Throughput          : {:.0} ops/sec (elapsed {:.2?})",
+        report.ops_per_sec, report.elapsed
+    );
+    println!("│ Zipfian ARC Hit Rate: {:.1}%", report.hit_rate_pct);
+    println!(
+        "│ 4KB Slab Invariant  : {}",
+        if report.slab_invariant_passed {
+            "PASSED (Zero leaks / Zero race conditions)"
+        } else {
+            "FAILED"
+        }
+    );
+    println!("╰────────────────────────────────────────────────────────────────────╯");
+    Ok(())
+}
+
+fn cmd_profiles() {
+    println!("╭─── APUS Supported Frontier MoE Profiles (engineered by mjojo) ─────────────────────╮");
+    for p in MoEModelPreset::catalog() {
+        println!(
+            "│ {:<28} │ {:>4.0}B/{:>2.0}B │ {:>2}L x {:>3}E (Top-{}) │ {:<20} │ {:>5.1} GB │",
+            p.model_id,
+            p.total_params_b,
+            p.active_params_b,
+            p.total_layers,
+            p.routed_experts_per_layer,
+            p.top_k_active,
+            p.attention_type,
+            p.disk_size_int4_gb
+        );
+    }
+    println!("╰────────────────────────────────────────────────────────────────────────────────────╯");
 }
 
 async fn cmd_serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {

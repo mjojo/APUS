@@ -82,6 +82,7 @@ dependencies = [
  "apus-core",
  "parking_lot",
  "serde",
+ "tokio",
  "tracing",
 ]
 
