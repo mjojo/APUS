@@ -1,3 +1,4 @@
+mod downloader;
 mod init;
 mod runtime;
 mod server;
@@ -41,7 +42,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Automatically run First-Launch OOBE Initialization if `apus.toml` does not exist yet
     let default_cfg_path = Path::new("apus.toml");
     if !default_cfg_path.exists() {
-        let _ = init::ensure_system_initialized(default_cfg_path, None, false)?;
+        let audit = init::ensure_system_initialized(default_cfg_path, None, false)?;
+        let _ = downloader::prompt_and_download_model(
+            audit.total_ram_gb,
+            audit.free_disk_space_gb,
+            &audit.recommended_models_dir,
+            None,
+        )
+        .await?;
     }
 
     let args: Vec<String> = env::args().collect();
@@ -82,12 +90,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "wizard" | "init" => {
             let cfg_path = args.get(2).map(|s| s.as_str()).unwrap_or("apus.toml");
             let custom_dir = args.get(3).map(Path::new);
-            cmd_wizard(cfg_path, custom_dir)?;
+            cmd_wizard(cfg_path, custom_dir).await?;
+        }
+        "pull" | "hub" => {
+            let choice: Option<usize> = args.get(2).and_then(|s| s.parse().ok());
+            cmd_pull(choice).await?;
         }
         "audit" => {
             cmd_audit()?;
         }
-        "manifest" | "pull" => {
+        "manifest" => {
             let resolved =
                 init::resolve_model_path(args.get(2).map(|s| s.as_str()), default_cfg_path);
             cmd_manifest_and_verify(&resolved.to_string_lossy())?;
@@ -96,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cmd_stress()?;
         }
         "profiles" | "models" => {
-            cmd_profiles();
+            cmd_profiles()?;
         }
         "serve" => {
             let port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8080);
@@ -127,6 +139,7 @@ fn print_banner() {
     println!("├──────────────────────────────────────────────────────────────────────────────┤");
     println!("│  CLI Commands:                                                               │");
     println!("│    apus wizard   [apus.toml] [models_dir]      OOBE Hardware & Disk Wizard   │");
+    println!("│    apus pull     [choice_num]                  Interactive Model Hub & Pull  │");
     println!("│    apus convert  [out.apus] [layers] [experts] Pack weights into 4K .apus    │");
     println!("│    apus import   [in.safetensors|.gguf] [out]  Import HF/GGUF into 4K .apus  │");
     println!("│    apus inspect  [file.apus]                   Verify header, LBA & BLAKE3   │");
@@ -468,11 +481,11 @@ async fn cmd_bench(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn cmd_wizard(
+async fn cmd_wizard(
     cfg_path: &str,
     custom_models_dir: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let _audit = init::ensure_system_initialized(Path::new(cfg_path), custom_models_dir, true)?;
+    let audit = init::ensure_system_initialized(Path::new(cfg_path), custom_models_dir, true)?;
     let accel = ComputeAccelerator::detect_host_cpu();
     let topo = HardwareTopologyScanner::probe_host();
     let pinned_core0 = HardwareTopologyScanner::pin_current_thread_to_core(0);
@@ -484,6 +497,25 @@ fn cmd_wizard(
         accel.label(),
         pinned_core0
     );
+    let _ = downloader::prompt_and_download_model(
+        audit.total_ram_gb,
+        audit.free_disk_space_gb,
+        &audit.recommended_models_dir,
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn cmd_pull(choice: Option<usize>) -> Result<(), Box<dyn std::error::Error>> {
+    let audit = init::audit_host_environment(None)?;
+    let _ = downloader::prompt_and_download_model(
+        audit.total_ram_gb,
+        audit.free_disk_space_gb,
+        &audit.recommended_models_dir,
+        choice,
+    )
+    .await?;
     Ok(())
 }
 
@@ -555,13 +587,26 @@ fn cmd_stress() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn cmd_profiles() {
+fn cmd_profiles() -> Result<(), Box<dyn std::error::Error>> {
+    let audit = init::audit_host_environment(None)?;
     println!(
-        "╭─── APUS Supported Frontier MoE Profiles (engineered by mjojo) ─────────────────────╮"
+        "╭─── APUS Frontier MoE Model Catalog (engineered by mjojo) ──────────────────────────────────────────╮"
+    );
+    println!(
+        "│ Host Hardware: {:.1} GB RAM | Primary Storage '{}' ({:.1} GB free)                                   │",
+        audit.total_ram_gb,
+        audit.selected_drive_mount.display(),
+        audit.free_disk_space_gb
+    );
+    println!(
+        "├───────────────────────────────┬────────────┬──────────────────┬──────────────────────────┬─────────┤"
     );
     for p in MoEModelPreset::catalog() {
+        let fits = audit.total_ram_gb >= p.min_ram_slab_gb
+            && audit.free_disk_space_gb >= p.disk_size_int4_gb;
+        let badge = if fits { "READY" } else { "LOW-DSK" };
         println!(
-            "│ {:<28} │ {:>4.0}B/{:>2.0}B │ {:>2}L x {:>3}E (Top-{}) │ {:<20} │ {:>5.1} GB │",
+            "│ {:<29} │ {:>4.0}B/{:>2.0}B │ {:>2}L x {:>3}E (T-{}) │ {:<24} │ {:>5.0}GB {}│",
             p.model_id,
             p.total_params_b,
             p.active_params_b,
@@ -569,12 +614,14 @@ fn cmd_profiles() {
             p.routed_experts_per_layer,
             p.top_k_active,
             p.attention_type,
-            p.disk_size_int4_gb
+            p.disk_size_int4_gb,
+            badge
         );
     }
     println!(
-        "╰────────────────────────────────────────────────────────────────────────────────────╯"
+        "╰───────────────────────────────┴────────────┴──────────────────┴──────────────────────────┴─────────╯"
     );
+    Ok(())
 }
 
 async fn cmd_serve(

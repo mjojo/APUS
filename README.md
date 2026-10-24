@@ -22,7 +22,7 @@
 
 [Architecture](#system-architecture) •
 [Key Innovations](#key-engineering-innovations) •
-[Supported Profiles](#supported-frontier-moe-profiles-apus-profiles) •
+[Supported Profiles](#supported-frontier-moe-profiles-apus-profiles--apus-pull) •
 [Binary Format (`*.apus` / `*.roost`)](#binary-specifications-apus--roost) •
 [Quick Start](#quick-start) •
 [Telemetry HUD](#aerospace-telemetry-tui) •
@@ -182,6 +182,9 @@ When APUS starts for the first time and `apus.toml` does not exist yet, it autom
 ```bash
 # Run OOBE Wizard and optionally point the models directory to a dedicated NVMe drive:
 cargo run --release --bin apus -- wizard apus.toml "C:/APUS_Models"
+
+# Launch the interactive Model Hub & Downloader (with hardware compatibility badges & indicatif progress bar):
+cargo run --release --bin apus -- pull
 ```
 
 ### 3. Import Upstream Hugging Face `.safetensors` / `.gguf` or Pack Synthetic MoE Weights
