@@ -22,6 +22,7 @@ pub struct RuntimeGenerationResult {
     pub arc_telemetry: ArcTelemetry,
     pub context_tokens_total: usize,
     pub nvme_temp_c: u8,
+    pub routed_expert_indices: Vec<u16>,
 }
 
 /// Unified end-to-end APUS Inference Runtime Session.
@@ -155,6 +156,7 @@ impl ApusRuntimeSession {
         }
         let mut next_hidden = vec![0.0f32; 64];
         let mut generated_ids = Vec::new();
+        let mut routed_expert_indices = Vec::new();
         let mut sampler = GenerationSampler::new(SamplerConfig::default(), 1337);
 
         let steps = max_steps.clamp(1, 16);
@@ -173,6 +175,7 @@ impl ApusRuntimeSession {
                 let mut locked_slots = Vec::with_capacity(selections.len());
 
                 for sel in &selections {
+                    routed_expert_indices.push(sel.id.expert);
                     let (tier, evicted) = self.arc_cache.access(sel.id);
                     if let Some(victim) = evicted {
                         self.slab_arena.evict(&victim);
@@ -254,6 +257,7 @@ impl ApusRuntimeSession {
             arc_telemetry,
             context_tokens_total,
             nvme_temp_c,
+            routed_expert_indices,
         })
     }
 

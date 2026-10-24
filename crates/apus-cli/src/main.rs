@@ -609,6 +609,7 @@ async fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
         let prompt_to_run = dash.prompt_input.clone();
         dash.submit_prompt();
         let gen_res = runtime.generate_response(&prompt_to_run, 4).await?;
+        dash.record_routed_experts(&gen_res.routed_expert_indices);
         dash.apply_runtime_response(
             gen_res.reply_text,
             gen_res.tok_per_sec,
@@ -679,11 +680,19 @@ async fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
                     {
                         dash.toggle_nvme_cap();
                     }
+                    KeyCode::Up | KeyCode::PageUp => {
+                        dash.scroll_chat_up();
+                    }
+                    KeyCode::Down | KeyCode::PageDown => {
+                        dash.scroll_chat_down();
+                    }
                     KeyCode::Enter => {
                         let user_prompt = dash.prompt_input.trim().to_string();
                         if !user_prompt.is_empty() {
                             dash.submit_prompt();
+                            dash.chat_scroll_offset = 0;
                             if let Ok(gen_res) = runtime.generate_response(&user_prompt, 4).await {
+                                dash.record_routed_experts(&gen_res.routed_expert_indices);
                                 dash.apply_runtime_response(
                                     gen_res.reply_text,
                                     gen_res.tok_per_sec,

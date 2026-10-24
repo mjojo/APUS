@@ -30,10 +30,20 @@ pub struct DashboardState {
     pub chat_messages: Vec<(String, String)>,
     pub prompt_input: String,
     pub pending_stream_tokens: Vec<String>,
+    /// Live expert activation counts for the current layer (indexed 0..288)
+    pub expert_heatmap: Vec<u16>,
+    /// Live I/O-Aware Continuous Batching tickets
+    pub live_tickets: Vec<(String, String, bool)>,
+    /// Manual vertical scroll offset for the chat panel
+    pub chat_scroll_offset: u16,
 }
 
 impl Default for DashboardState {
     fn default() -> Self {
+        let mut initial_heatmap = vec![0u16; 288];
+        for &hot_idx in &[3usize, 14, 29, 64, 98, 142, 201, 255] {
+            initial_heatmap[hot_idx] = 5;
+        }
         Self {
             header: TelemetryHeaderState::default(),
             tick: 0,
@@ -62,6 +72,20 @@ impl Default for DashboardState {
             ],
             prompt_input: String::new(),
             pending_stream_tokens: Vec::new(),
+            expert_heatmap: initial_heatmap,
+            live_tickets: vec![
+                (
+                    "[ACTIVE]".into(),
+                    "#01 Generating IoRingQueue (Layer 42/75) ── ETA ~12s".into(),
+                    true,
+                ),
+                (
+                    "[QUEUED]".into(),
+                    "#02 Auditing unsafe memory blocks in crate apus-core".into(),
+                    false,
+                ),
+            ],
+            chat_scroll_offset: 0,
         }
     }
 }
@@ -125,6 +149,25 @@ impl DashboardState {
             .split_inclusive(' ')
             .map(|s| s.to_string())
             .collect();
+    }
+
+    /// Records a list of routed expert indices (0..288) into the live Braille heatmap
+    pub fn record_routed_experts(&mut self, active_experts: &[u16]) {
+        for slot in &mut self.expert_heatmap {
+            *slot = slot.saturating_sub(1);
+        }
+        for &exp in active_experts {
+            let idx = (exp as usize) % self.expert_heatmap.len().max(1);
+            self.expert_heatmap[idx] = self.expert_heatmap[idx].saturating_add(3).min(15);
+        }
+    }
+
+    pub fn scroll_chat_up(&mut self) {
+        self.chat_scroll_offset = self.chat_scroll_offset.saturating_add(2);
+    }
+
+    pub fn scroll_chat_down(&mut self) {
+        self.chat_scroll_offset = self.chat_scroll_offset.saturating_sub(2);
     }
 
     pub fn toggle_nvme_cap(&mut self) {
@@ -286,7 +329,8 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, state: &DashboardState) {
         wrapped_line_count += char_len.max(1).div_ceil(inner_width);
     }
     let visible_height = inner.height as usize;
-    let scroll_y = wrapped_line_count.saturating_sub(visible_height) as u16;
+    let auto_scroll = wrapped_line_count.saturating_sub(visible_height) as u16;
+    let scroll_y = auto_scroll.saturating_sub(state.chat_scroll_offset);
 
     frame.render_widget(
         Paragraph::new(lines)
@@ -394,6 +438,21 @@ fn render_nvme_smart(frame: &mut Frame, area: Rect, state: &DashboardState) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+/// Encodes 8 expert activation intensities into a single Unicode Braille character (`U+2800..=U+28FF`)
+pub fn encode_braille_cell(intensities: &[u16], threshold: u16) -> char {
+    // Standard 2x4 Braille dot bit positions:
+    // (0,0)->0x01, (0,1)->0x02, (0,2)->0x04, (1,0)->0x08, (1,1)->0x10, (1,2)->0x20, (0,3)->0x40, (1,3)->0x80
+    const DOT_BITS: [u8; 8] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80];
+    let mut mask = 0u8;
+    for (i, &bit) in DOT_BITS.iter().enumerate() {
+        let val = intensities.get(i).copied().unwrap_or(0);
+        if val >= threshold {
+            mask |= bit;
+        }
+    }
+    char::from_u32(0x2800 + mask as u32).unwrap_or('⠀')
+}
+
 fn render_braille_heatmap(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -409,25 +468,52 @@ fn render_braille_heatmap(frame: &mut Frame, area: Rect, state: &DashboardState)
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let braille_row_1 = if state.tick.is_multiple_of(2) {
-        " ⠀⢀⣠⣴⣶⣾⣿⣿⣿⣿⣷⣶⣦ "
-    } else {
-        " ⠀⢀⣠⣴⣾⣿⣿⣿⣿⣿⣿⣷⣦ "
-    };
+    let active_count = state
+        .expert_heatmap
+        .iter()
+        .filter(|&&v| v > 0)
+        .count()
+        .max(8);
+
+    // Dynamically encode 3 rows of 14 Braille characters (each char = 8 experts) from `state.expert_heatmap`
+    let mut rows_braille = [
+        String::with_capacity(18),
+        String::with_capacity(18),
+        String::with_capacity(18),
+    ];
+    for (r_idx, row_str) in rows_braille.iter_mut().enumerate() {
+        row_str.push(' ');
+        for c_idx in 0..14 {
+            let base = ((r_idx * 14 + c_idx) * 8) % state.expert_heatmap.len().max(8);
+            let mut slice = [0u16; 8];
+            for (k, slot_val) in slice.iter_mut().enumerate() {
+                let raw_val = state.expert_heatmap[(base + k) % state.expert_heatmap.len()];
+                // Combine real expert hits with a subtle travelling wave across layers
+                let wave_hit = u16::from((base + k + state.tick as usize).is_multiple_of(7));
+                *slot_val = raw_val.saturating_add(wave_hit);
+            }
+            row_str.push(encode_braille_cell(&slice, 1));
+        }
+        row_str.push(' ');
+    }
+
     let lines = vec![
         Line::from(vec![
-            Span::styled(braille_row_1, Style::default().fg(CYAN_NEON)),
+            Span::styled(rows_braille[0].clone(), Style::default().fg(CYAN_NEON)),
             Span::styled(
                 "Mode: Code/Rust [Cluster #07]",
                 Style::default().fg(Color::White),
             ),
         ]),
         Line::from(vec![
-            Span::styled(" ⠀⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀ ", Style::default().fg(INDIGO_GLOW)),
-            Span::styled("Active: 8 / 288 per layer", Style::default().fg(TEXT_MUTED)),
+            Span::styled(rows_braille[1].clone(), Style::default().fg(INDIGO_GLOW)),
+            Span::styled(
+                format!("Active: {} / 288 per layer", active_count),
+                Style::default().fg(TEXT_MUTED),
+            ),
         ]),
         Line::from(vec![
-            Span::styled(" ⠀⠙⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠋⠀ ", Style::default().fg(CYAN_NEON)),
+            Span::styled(rows_braille[2].clone(), Style::default().fg(CYAN_NEON)),
             Span::styled("Look-ahead (L+2): Ready", Style::default().fg(EMERALD_OK)),
         ]),
     ];
@@ -446,27 +532,23 @@ fn render_ticket_queue(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(
-                " ▸ [ACTIVE] ",
-                Style::default().fg(EMERALD_OK).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(
-                    "#01 Generating IoRingQueue (Layer {:02}/{}) ── ETA ~12s",
-                    state.active_layer, state.total_layers
-                ),
-                Style::default().fg(Color::White),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" ▹ [QUEUED] ", Style::default().fg(GOLD_BADGE)),
-            Span::styled(
-                "#02 Auditing unsafe memory blocks in crate apus-core",
-                Style::default().fg(TEXT_MUTED),
-            ),
-        ]),
-    ];
+    let mut lines = Vec::with_capacity(state.live_tickets.len());
+    for (badge, summary, is_active) in &state.live_tickets {
+        let icon = if *is_active { " ▸ " } else { " ▹ " };
+        let badge_style = if *is_active {
+            Style::default().fg(EMERALD_OK).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(GOLD_BADGE)
+        };
+        let text_style = if *is_active {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(TEXT_MUTED)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{icon}{badge:<8} "), badge_style),
+            Span::styled(summary.clone(), text_style),
+        ]));
+    }
     frame.render_widget(Paragraph::new(lines), inner);
 }
