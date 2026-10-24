@@ -10,7 +10,9 @@ pub use format::{
     APUS_MAGIC, AUTHOR_SIGNATURE, ApusFileHeader, FormatError, LbaExpertEntry,
     ROOST_AUTHOR_SIGNATURE, ROOST_MAGIC, RoostSessionHeader, RoostSnapshot,
 };
-pub use imatrix::{ImatrixCalibrator, QUANT_GROUP_SIZE, QuantizerInt2, QuantizerInt4};
+pub use imatrix::{
+    ImatrixCalibrator, QUANT_GROUP_SIZE, QuantizerInt2, QuantizerInt4, QuantizerInt8,
+};
 pub use safetensors::{
     GGUF_MAGIC, GgufHeaderSummary, MoETensorRole, SafetensorDescriptor, SafetensorsMoEParser,
     classify_moe_tensor_name,
@@ -106,6 +108,13 @@ mod tests {
         assert_eq!(unpacked.len(), original.len());
         for (a, b) in original.iter().zip(unpacked.iter()) {
             assert!((a - b).abs() < 0.35, "mismatch: {a} vs {b}");
+        }
+
+        // Verify INT8 Quantizer accuracy (Sprint 6 Mixed Precision)
+        let packed8 = QuantizerInt8::quantize(&original, None);
+        let unpacked8 = QuantizerInt8::dequantize(&packed8, original.len());
+        for (a, b) in original.iter().zip(unpacked8.iter()) {
+            assert!((a - b).abs() < 0.05, "int8 mismatch: {a} vs {b}");
         }
     }
 

@@ -166,3 +166,56 @@ impl QuantizerInt2 {
         out
     }
 }
+
+/// High-precision symmetric INT8 quantizer (Q8_0: 32 weights per FP32 scale = 36 bytes per block).
+/// Used for Mixed Precision storage of dense attention layers, shared experts, and router gates (Sprint 6).
+pub struct QuantizerInt8;
+
+impl QuantizerInt8 {
+    pub fn quantize(weights: &[f32], imatrix: Option<&ImatrixCalibrator>) -> Vec<u8> {
+        let num_groups = weights.len().div_ceil(QUANT_GROUP_SIZE);
+        let mut out = Vec::with_capacity(num_groups * 36);
+
+        for (g_idx, chunk) in weights.chunks(QUANT_GROUP_SIZE).enumerate() {
+            let mut padded = [0.0f32; QUANT_GROUP_SIZE];
+            for (i, &w) in chunk.iter().enumerate() {
+                let imp = imatrix
+                    .and_then(|im| {
+                        im.channel_importance
+                            .get(g_idx * QUANT_GROUP_SIZE + i)
+                            .copied()
+                    })
+                    .unwrap_or(1.0);
+                padded[i] = w * imp.powf(0.03);
+            }
+
+            let max_abs = padded.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+            let scale = if max_abs > 1e-8 { max_abs / 127.0 } else { 1.0 };
+            out.extend_from_slice(&scale.to_le_bytes());
+
+            for &val in &padded {
+                let q = (val / scale).round().clamp(-127.0, 127.0) as i8;
+                out.push(q as u8);
+            }
+        }
+        out
+    }
+
+    pub fn dequantize(packed: &[u8], max_elements: usize) -> Vec<f32> {
+        let mut out = Vec::with_capacity(max_elements);
+        for block in packed.chunks_exact(36) {
+            let scale = f32::from_le_bytes([block[0], block[1], block[2], block[3]]);
+            for &b in &block[4..36] {
+                if out.len() >= max_elements {
+                    break;
+                }
+                let q = b as i8;
+                out.push((q as f32) * scale);
+            }
+            if out.len() >= max_elements {
+                break;
+            }
+        }
+        out
+    }
+}

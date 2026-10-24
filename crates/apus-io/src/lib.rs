@@ -105,6 +105,28 @@ impl ApusBlockStorage {
     pub fn pending_prefetches(&self) -> Vec<ExpertId> {
         self.prefetch_queue.lock().clone()
     }
+
+    /// SATA AHCI Cluster Sequential Read (Sprint 11):
+    /// Coalesces multiple requested experts on the same layer, sorts them by physical LBA file offset,
+    /// and reads them in a single linear sequential disk sweep to avoid random-seek thrashing on SATA SSDs.
+    pub async fn read_expert_cluster_sequential(
+        &self,
+        ids: &[ExpertId],
+    ) -> Result<Vec<(ExpertId, PageAlignedSlot)>, ApusError> {
+        let mut entries: Vec<(ExpertId, LbaExpertEntry)> = ids
+            .iter()
+            .filter_map(|&id| self.lba_index.get(&id).copied().map(|e| (id, e)))
+            .collect();
+        entries.sort_by_key(|&(_, e)| e.file_offset);
+
+        let mut results = Vec::with_capacity(entries.len());
+        for (id, entry) in entries {
+            let mut slot = PageAlignedSlot::new(entry.compressed_size as usize)?;
+            self.read_expert_into_slot(id, &mut slot).await?;
+            results.push((id, slot));
+        }
+        Ok(results)
+    }
 }
 
 impl ExpertStorage for ApusBlockStorage {
@@ -138,7 +160,8 @@ impl ExpertStorage for ApusBlockStorage {
         let read_len = (entry.compressed_size as usize).min(slot.size());
         debug_assert_eq!(entry.file_offset % (PAGE_ALIGNMENT as u64), 0);
 
-        // 2. Enforce OS Drive QoS bandwidth pacing
+        // 2. Acquire hard Queue Depth semaphore permit (QD <= 32) and enforce OS Drive QoS bandwidth pacing
+        let _qd_permit = self.qos.acquire_qd_permit().await;
         let qos_delay = self.qos.register_read_and_compute_delay(read_len);
         if !qos_delay.is_zero() {
             tokio::time::sleep(qos_delay).await;
@@ -320,10 +343,34 @@ impl ExpertStorage for MmapStorage {
         let mut p = self.prefetched.lock();
         p.clear();
         p.extend_from_slice(upcoming);
+
+        // Sprint 9: On Unix / macOS Unified Memory, issue `madvise(MADV_WILLNEED)` hints
+        // so the kernel asynchronously prefetches upcoming expert pages into Unified RAM.
+        #[cfg(unix)]
+        {
+            const MADV_WILLNEED: i32 = 3;
+            unsafe extern "C" {
+                fn madvise(addr: *mut std::ffi::c_void, len: usize, advice: i32) -> i32;
+            }
+            for id in upcoming {
+                if let Some(entry) = self.lba_index.get(id) {
+                    let start = entry.file_offset as usize;
+                    let len = entry.compressed_size as usize;
+                    if start + len <= self.mmap.len() {
+                        unsafe {
+                            let ptr = self.mmap.as_ptr().add(start) as *mut std::ffi::c_void;
+                            let _ = madvise(ptr, len, MADV_WILLNEED);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
-/// 3. `KvCompressedStorage` Engine — block-compressed KV store for SATA SSDs and NAS
+/// `KvCompressedStorage` Engine — block-compressed KV store for SATA SSDs and NAS (Sprint 7).
+/// Compresses each expert's weights on-the-fly using lossless Run-Length / Zero-Page framing (`KVZ4`)
+/// so slow SATA III (550 MB/s) and gigabit NAS links transfer fewer physical bytes.
 pub struct KvCompressedStorage {
     store: Mutex<HashMap<ExpertId, Vec<u8>>>,
     prefetched: Mutex<Vec<ExpertId>>,
@@ -337,8 +384,64 @@ impl KvCompressedStorage {
         }
     }
 
-    pub fn put_expert(&self, id: ExpertId, raw_weights: &[u8]) {
-        self.store.lock().insert(id, raw_weights.to_vec());
+    fn compress_blob(input: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(input.len() + 8);
+        out.extend_from_slice(b"KVZ4");
+        out.extend_from_slice(&(input.len() as u32).to_le_bytes());
+        let mut i = 0;
+        while i < input.len() {
+            let b = input[i];
+            let mut run = 1usize;
+            while i + run < input.len() && input[i + run] == b && run < 255 {
+                run += 1;
+            }
+            if run >= 4 || b == 0xFE {
+                out.push(0xFE);
+                out.push(b);
+                out.push(run as u8);
+                i += run;
+            } else {
+                out.push(b);
+                i += 1;
+            }
+        }
+        out
+    }
+
+    fn decompress_blob(compressed: &[u8]) -> Option<Vec<u8>> {
+        if compressed.len() < 8 || &compressed[0..4] != b"KVZ4" {
+            return None;
+        }
+        let orig_len = u32::from_le_bytes(compressed[4..8].try_into().ok()?) as usize;
+        let mut out = Vec::with_capacity(orig_len);
+        let mut i = 8;
+        while i < compressed.len() && out.len() < orig_len {
+            if compressed[i] == 0xFE {
+                if i + 2 >= compressed.len() {
+                    return None;
+                }
+                let val = compressed[i + 1];
+                let count = compressed[i + 2] as usize;
+                for _ in 0..count {
+                    if out.len() < orig_len {
+                        out.push(val);
+                    }
+                }
+                i += 3;
+            } else {
+                out.push(compressed[i]);
+                i += 1;
+            }
+        }
+        Some(out)
+    }
+
+    /// Compresses and stores an expert weight block in the KV store, returning the compressed byte size
+    pub fn put_expert(&self, id: ExpertId, raw_weights: &[u8]) -> usize {
+        let compressed = Self::compress_blob(raw_weights);
+        let len = compressed.len();
+        self.store.lock().insert(id, compressed);
+        len
     }
 }
 
@@ -354,19 +457,23 @@ impl ExpertStorage for KvCompressedStorage {
         id: ExpertId,
         slot: &mut PageAlignedSlot,
     ) -> Result<(), ApusError> {
-        let data = self
-            .store
-            .lock()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| ApusError::StorageIo {
-                layer: id.layer,
-                expert: id.expert,
-                source: std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Expert not found in KV store",
-                ),
-            })?;
+        let compressed =
+            self.store
+                .lock()
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| ApusError::StorageIo {
+                    layer: id.layer,
+                    expert: id.expert,
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Expert not found in KV store",
+                    ),
+                })?;
+        let data = Self::decompress_blob(&compressed).ok_or(ApusError::CorruptedExpertWeights {
+            layer: id.layer,
+            expert: id.expert,
+        })?;
         let copy_len = data.len().min(slot.size());
         slot.as_mut_slice()[..copy_len].copy_from_slice(&data[..copy_len]);
         Ok(())

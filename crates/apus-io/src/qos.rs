@@ -1,5 +1,7 @@
 use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[cfg(windows)]
 #[link(name = "kernel32")]
@@ -37,14 +39,15 @@ struct QosInternal {
     os_thread_priority_applied: bool,
 }
 
-/// System Drive Quality-of-Service (OS Drive QoS) Controller.
+/// System Drive Quality-of-Service (OS Drive QoS) & SATA AHCI Queue Depth Controller.
 /// Caps peak NVMe utilization (e.g., to 5.5 GB/s out of 7.0 GB/s),
-/// reserving at least 20% of bandwidth and command queue depth (QD) for the host OS kernel.
+/// reserving at least 20% of bandwidth and command queue depth (QD <= 32 via async semaphore) for the host OS kernel.
 pub struct OsDriveQosController {
     os_drive_mode: bool,
     priority: IoPriorityClass,
     bandwidth_cap_gbs: f32,
     max_queue_depth: usize,
+    qd_semaphore: Arc<Semaphore>,
     state: Mutex<QosInternal>,
 }
 
@@ -55,11 +58,13 @@ impl OsDriveQosController {
         bandwidth_cap_gbs: f32,
         max_queue_depth: usize,
     ) -> Self {
+        let clamped_qd = max_queue_depth.clamp(1, 32);
         Self {
             os_drive_mode,
             priority,
             bandwidth_cap_gbs: bandwidth_cap_gbs.max(0.5),
-            max_queue_depth: max_queue_depth.clamp(1, 128),
+            max_queue_depth: clamped_qd,
+            qd_semaphore: Arc::new(Semaphore::new(clamped_qd)),
             state: Mutex::new(QosInternal {
                 bytes_in_window: 0,
                 window_start: Instant::now(),
@@ -69,6 +74,11 @@ impl OsDriveQosController {
                 os_thread_priority_applied: false,
             }),
         }
+    }
+
+    /// Acquires a hard async Queue Depth permit (guaranteed `QD <= 32` for SATA AHCI & OS NVMe protection)
+    pub async fn acquire_qd_permit(&self) -> Option<OwnedSemaphorePermit> {
+        self.qd_semaphore.clone().acquire_owned().await.ok()
     }
 
     /// Applies OS-native background/low I/O priority to the current worker thread

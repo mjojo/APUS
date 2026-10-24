@@ -16,8 +16,11 @@ use thiserror::Error;
 pub use cache::{ArcCache, ArcTelemetry, CacheTier};
 pub use config::ApusConfig;
 pub use grammar::{GrammarConstraintEngine, GrammarMode};
-pub use mla::{KV_PAGE_TOKENS, LatentKvToken, MLA_LATENT_DIM, MlaKvCache};
-pub use mtp::{LookAheadPrefetcher, MoERouter, MtpSpeculativeEngine, RoutedExpertSelection};
+pub use mla::{GqaKvCache, KV_PAGE_TOKENS, LatentKvToken, MLA_LATENT_DIM, MlaKvCache};
+pub use mtp::{
+    ExternalDraftSpeculativeVerifier, LookAheadPrefetcher, MoERouter, MtpSpeculativeEngine,
+    RoutedExpertSelection,
+};
 pub use profiles::MoEModelPreset;
 pub use sampler::{BpeTokenizer, GenerationSampler, SamplerConfig};
 pub use slab::SlabArena;
@@ -263,6 +266,19 @@ mod tests {
         let serialized = kv.to_bytes();
         let restored = MlaKvCache::from_bytes(&serialized, 4, 16);
         assert_eq!(restored.total_context_tokens(), 30);
+
+        // Verify GqaKvCache and ExternalDraftSpeculativeVerifier (Sprints 16 & 17)
+        let mut gqa = GqaKvCache::new(8, 64, 4, 16);
+        let gqa_vec = vec![0.15f32; gqa.kv_vector_dim()];
+        gqa.append_gqa_token(1, &gqa_vec);
+        assert_eq!(gqa.total_context_tokens(), 1);
+
+        let draft_verifier = ExternalDraftSpeculativeVerifier::new(4, 0.8);
+        let accepted = draft_verifier.verify_draft_batch(
+            &[(10, 0.9), (20, 0.9), (30, 0.9)],
+            &[(10, 0.95), (20, 0.85), (99, 0.10)],
+        );
+        assert_eq!(accepted, vec![10, 20, 99]);
     }
 
     #[test]

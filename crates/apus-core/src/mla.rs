@@ -151,3 +151,69 @@ impl MlaKvCache {
         cache
     }
 }
+
+/// Classical Grouped-Query Attention (GQA) Paged KV-Cache Manager (Sprint 16 `apus-attn`).
+/// Supports non-MLA MoE architectures such as **Mixtral 8x22B** and **Qwen3-MoE** with dynamic FP8/INT8 KV compression.
+pub struct GqaKvCache {
+    pub num_kv_heads: usize,
+    pub head_dim: usize,
+    pub sink_tokens_keep: usize,
+    pub vram_hot_window_tokens: usize,
+    hot_tokens: Vec<LatentKvToken>,
+    cold_pages: Vec<Vec<LatentKvToken>>,
+}
+
+impl GqaKvCache {
+    pub fn new(
+        num_kv_heads: usize,
+        head_dim: usize,
+        sink_tokens_keep: usize,
+        vram_hot_window_tokens: usize,
+    ) -> Self {
+        Self {
+            num_kv_heads: num_kv_heads.max(1),
+            head_dim: head_dim.max(32),
+            sink_tokens_keep: sink_tokens_keep.max(4),
+            vram_hot_window_tokens: vram_hot_window_tokens.max(64),
+            hot_tokens: Vec::new(),
+            cold_pages: Vec::new(),
+        }
+    }
+
+    pub fn kv_vector_dim(&self) -> usize {
+        self.num_kv_heads * self.head_dim * 2
+    }
+
+    /// Quantizes and appends a Key+Value vector pair for a single token, paging older entries to system RAM
+    pub fn append_gqa_token(&mut self, token_id: u32, kv_fp32: &[f32]) {
+        let max_abs = kv_fp32
+            .iter()
+            .fold(0.0f32, |m, &v| m.max(v.abs()))
+            .max(1e-6);
+        let scale = max_abs / 127.0;
+        let latent_fp8 = kv_fp32
+            .iter()
+            .take(self.kv_vector_dim())
+            .map(|&v| (v / scale).round().clamp(-127.0, 127.0) as i8)
+            .collect();
+        self.hot_tokens.push(LatentKvToken {
+            token_id,
+            scale,
+            latent_fp8,
+        });
+
+        let max_hot = self.sink_tokens_keep + self.vram_hot_window_tokens;
+        if self.hot_tokens.len() >= max_hot + KV_PAGE_TOKENS {
+            let drain_end = self.sink_tokens_keep + KV_PAGE_TOKENS;
+            let page = self
+                .hot_tokens
+                .drain(self.sink_tokens_keep..drain_end)
+                .collect();
+            self.cold_pages.push(page);
+        }
+    }
+
+    pub fn total_context_tokens(&self) -> usize {
+        self.hot_tokens.len() + self.cold_pages.iter().map(|p| p.len()).sum::<usize>()
+    }
+}

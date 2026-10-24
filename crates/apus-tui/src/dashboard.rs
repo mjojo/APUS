@@ -36,6 +36,8 @@ pub struct DashboardState {
     pub live_tickets: Vec<(String, String, bool)>,
     /// Manual vertical scroll offset for the chat panel
     pub chat_scroll_offset: u16,
+    /// Active focused panel index (0 = Session Chat, 1 = ARC Memory, 2 = NVMe I/O, 3 = Braille Heatmap, 4 = Ticket Queue)
+    pub active_panel_index: u8,
 }
 
 impl Default for DashboardState {
@@ -86,6 +88,7 @@ impl Default for DashboardState {
                 ),
             ],
             chat_scroll_offset: 0,
+            active_panel_index: 0,
         }
     }
 }
@@ -170,6 +173,10 @@ impl DashboardState {
         self.chat_scroll_offset = self.chat_scroll_offset.saturating_sub(2);
     }
 
+    pub fn next_panel(&mut self) {
+        self.active_panel_index = (self.active_panel_index + 1) % 5;
+    }
+
     pub fn toggle_nvme_cap(&mut self) {
         self.nvme_cap_pct = match self.nvme_cap_pct {
             80 => 100,
@@ -245,6 +252,14 @@ pub fn render_dashboard(frame: &mut Frame, state: &DashboardState) {
     let footer = Paragraph::new(Line::from(vec![
         Span::styled("┗━ ", Style::default().fg(BORDER_SLATE)),
         Span::styled(
+            "[Tab]",
+            Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" Panel#{} ━ ", state.active_panel_index + 1),
+            Style::default().fg(TEXT_MUTED),
+        ),
+        Span::styled(
             "[Ctrl+S]",
             Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD),
         ),
@@ -261,7 +276,7 @@ pub fn render_dashboard(frame: &mut Frame, state: &DashboardState) {
             "[Q/Esc]",
             Style::default().fg(GOLD_BADGE).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" Quit ━━━ ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(" Quit ━━ ", Style::default().fg(TEXT_MUTED)),
         Span::styled(
             status_right,
             Style::default().fg(GOLD_BADGE).add_modifier(Modifier::BOLD),
@@ -271,10 +286,15 @@ pub fn render_dashboard(frame: &mut Frame, state: &DashboardState) {
 }
 
 fn render_chat_panel(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let border_col = if state.active_panel_index == 0 {
+        CYAN_NEON
+    } else {
+        BORDER_SLATE
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER_SLATE).bg(BG_DARK))
+        .border_style(Style::default().fg(border_col).bg(BG_DARK))
         .title_top(Line::from(vec![
             Span::styled(
                 format!("─ SESSION #04 [{}] ", state.session_name),
@@ -341,10 +361,15 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, state: &DashboardState) {
 }
 
 fn render_arc_hierarchy(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let border_col = if state.active_panel_index == 1 {
+        CYAN_NEON
+    } else {
+        BORDER_SLATE
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER_SLATE).bg(BG_DARK))
+        .border_style(Style::default().fg(border_col).bg(BG_DARK))
         .title_top(Span::styled(
             "─ MEMORY & CACHE HIERARCHY (ARC ENGINE) ─",
             Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD),
@@ -396,10 +421,15 @@ fn render_arc_hierarchy(frame: &mut Frame, area: Rect, state: &DashboardState) {
 }
 
 fn render_nvme_smart(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let border_col = if state.active_panel_index == 2 {
+        CYAN_NEON
+    } else {
+        BORDER_SLATE
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER_SLATE).bg(BG_DARK))
+        .border_style(Style::default().fg(border_col).bg(BG_DARK))
         .title_top(Span::styled(
             "─ NVMe I/O & S.M.A.R.T. [Samsung 990 PRO] ─",
             Style::default()
@@ -454,10 +484,15 @@ pub fn encode_braille_cell(intensities: &[u16], threshold: u16) -> char {
 }
 
 fn render_braille_heatmap(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let border_col = if state.active_panel_index == 3 {
+        CYAN_NEON
+    } else {
+        BORDER_SLATE
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER_SLATE).bg(BG_DARK))
+        .border_style(Style::default().fg(border_col).bg(BG_DARK))
         .title_top(Span::styled(
             format!(
                 "─ EXPERT ACTIVATION HEATMAP (21,504 / LAYER {:02}) ─",
@@ -521,10 +556,15 @@ fn render_braille_heatmap(frame: &mut Frame, area: Rect, state: &DashboardState)
 }
 
 fn render_ticket_queue(frame: &mut Frame, area: Rect, state: &DashboardState) {
+    let border_col = if state.active_panel_index == 4 {
+        CYAN_NEON
+    } else {
+        BORDER_SLATE
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER_SLATE).bg(BG_DARK))
+        .border_style(Style::default().fg(border_col).bg(BG_DARK))
         .title_top(Span::styled(
             "─ TICKET QUEUE (I/O-AWARE CONTINUOUS BATCHING SCHEDULER) ─",
             Style::default().fg(CYAN_NEON).add_modifier(Modifier::BOLD),

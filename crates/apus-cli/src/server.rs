@@ -111,11 +111,37 @@ pub struct ChatDelta {
     pub content: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct AnthropicMessageResponse {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub msg_type: &'static str,
+    pub role: &'static str,
+    pub model: String,
+    pub content: Vec<AnthropicContentBlock>,
+    pub stop_reason: &'static str,
+    pub usage: AnthropicUsage,
+}
+
+#[derive(Serialize)]
+pub struct AnthropicContentBlock {
+    #[serde(rename = "type")]
+    pub block_type: &'static str,
+    pub text: String,
+}
+
+#[derive(Serialize)]
+pub struct AnthropicUsage {
+    pub input_tokens: usize,
+    pub output_tokens: usize,
+}
+
 pub fn build_openai_router(state: ApiServerState) -> Router {
     Router::new()
         .route("/health", get(health_handler))
         .route("/v1/models", get(list_models_handler))
         .route("/v1/chat/completions", post(chat_completions_handler))
+        .route("/v1/messages", post(anthropic_messages_handler))
         .with_state(state)
 }
 
@@ -251,6 +277,53 @@ async fn chat_completions_handler(
     .into_response()
 }
 
+/// Anthropic Messages API compatible endpoint (`POST /v1/messages` — Sprint 28)
+async fn anthropic_messages_handler(
+    State(state): State<ApiServerState>,
+    Json(req): Json<ChatCompletionRequest>,
+) -> Json<AnthropicMessageResponse> {
+    let req_num = state.requests_served.fetch_add(1, Ordering::Relaxed) + 1;
+    let last_prompt = req
+        .messages
+        .last()
+        .map(|m| m.content.as_str())
+        .unwrap_or("Hello");
+    let model_used = req.model.unwrap_or_else(|| state.model_name.clone());
+    let max_steps = (req.max_tokens.unwrap_or(18) / 3).clamp(2, 12);
+
+    let (reply_text, input_tokens, output_tokens) = if let Some(rt) = &state.runtime {
+        match rt.generate_response(last_prompt, max_steps).await {
+            Ok(g) => (g.reply_text, g.prompt_tokens, g.completion_tokens),
+            Err(e) => (format!("[APUS Error]: {e}"), 4, 4),
+        }
+    } else {
+        (
+            format!(
+                "[APUS // {} // engineered by mjojo]\nAnthropic /v1/messages response #{req_num} for: \"{}\"",
+                model_used, last_prompt
+            ),
+            8,
+            32,
+        )
+    };
+
+    Json(AnthropicMessageResponse {
+        id: format!("msg_apus_{req_num}"),
+        msg_type: "message",
+        role: "assistant",
+        model: model_used,
+        content: vec![AnthropicContentBlock {
+            block_type: "text",
+            text: reply_text,
+        }],
+        stop_reason: "end_turn",
+        usage: AnthropicUsage {
+            input_tokens,
+            output_tokens,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,12 +375,26 @@ mod tests {
             max_tokens: Some(32),
             stream: Some(true),
         };
-        let resp_sse = chat_completions_handler(State(state), Json(req_sse)).await;
+        let resp_sse = chat_completions_handler(State(state.clone()), Json(req_sse)).await;
         assert_eq!(resp_sse.status(), StatusCode::OK);
         let sse_bytes = to_bytes(resp_sse.into_body(), 16384).await.unwrap();
         let sse_str = String::from_utf8_lossy(&sse_bytes);
         assert!(sse_str.contains("chat.completion.chunk"));
         assert!(sse_str.contains("data: [DONE]"));
+
+        // 4. Test Anthropic /v1/messages endpoint (Sprint 28)
+        let req_anth = ChatCompletionRequest {
+            model: Some("GLM-5.2-744B-Q4_K_M.apus".into()),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "Anthropic check".into(),
+            }],
+            max_tokens: Some(32),
+            stream: None,
+        };
+        let Json(anth_resp) = anthropic_messages_handler(State(state), Json(req_anth)).await;
+        assert_eq!(anth_resp.msg_type, "message");
+        assert_eq!(anth_resp.stop_reason, "end_turn");
         let _ = Request::new(Body::empty());
     }
 }

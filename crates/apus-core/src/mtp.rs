@@ -144,3 +144,47 @@ impl MtpSpeculativeEngine {
         tokens
     }
 }
+
+/// Secondary Speculative Decoding Loop: External Lightweight Draft Model Verifier (Sprint 17 `apus-mtp`).
+/// Used for MoE architectures without native MTP heads (e.g., Mixtral 8x22B, Qwen-MoE).
+/// A small resident 1B dense draft model proposes `draft_k` candidate tokens, and the 700B+ MoE target model
+/// verifies all `draft_k` tokens in a single batched LBA pass using Rejection Sampling.
+pub struct ExternalDraftSpeculativeVerifier {
+    pub draft_k: usize,
+    pub acceptance_threshold: f32,
+}
+
+impl ExternalDraftSpeculativeVerifier {
+    pub fn new(draft_k: usize, acceptance_threshold: f32) -> Self {
+        Self {
+            draft_k: draft_k.clamp(1, 8),
+            acceptance_threshold: acceptance_threshold.clamp(0.05, 1.0),
+        }
+    }
+
+    /// Verifies `draft_tokens` against target MoE model probabilities `(token_id, target_prob)`.
+    /// Accepts matching prefix tokens and emits a corrected fallback token at the first rejection point.
+    pub fn verify_draft_batch(
+        &self,
+        draft_tokens: &[(u32, f32)],
+        target_probs: &[(u32, f32)],
+    ) -> Vec<u32> {
+        let mut accepted = Vec::with_capacity(self.draft_k + 1);
+        let len = draft_tokens.len().min(target_probs.len()).min(self.draft_k);
+
+        for i in 0..len {
+            let (d_tok, d_prob) = draft_tokens[i];
+            let (t_tok, t_prob) = target_probs[i];
+            let ratio = t_prob / d_prob.max(1e-6);
+
+            if d_tok == t_tok || ratio >= self.acceptance_threshold {
+                accepted.push(d_tok);
+            } else {
+                // Reject draft token and substitute the target model's top token
+                accepted.push(t_tok);
+                return accepted;
+            }
+        }
+        accepted
+    }
+}

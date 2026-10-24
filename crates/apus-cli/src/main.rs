@@ -680,6 +680,9 @@ async fn cmd_run_tui(headless: bool) -> Result<(), Box<dyn std::error::Error>> {
                     {
                         dash.toggle_nvme_cap();
                     }
+                    KeyCode::Tab => {
+                        dash.next_panel();
+                    }
                     KeyCode::Up | KeyCode::PageUp => {
                         dash.scroll_chat_up();
                     }
