@@ -178,6 +178,25 @@ On Windows, you can launch APUS directly via [`start_apus.bat`](./start_apus.bat
 .\start_apus.bat profiles
 ```
 
+### One-Click Linux / macOS Launcher (`start_apus.sh`)
+
+On Linux and macOS, you can launch APUS directly via [`start_apus.sh`](./start_apus.sh). It automatically compiles `target/release/apus` if missing, initializes `apus.toml` via the OOBE Hardware Wizard on first launch, and provides the same interactive menu and direct CLI shortcuts:
+
+```bash
+chmod +x ./start_apus.sh
+
+# Interactive launcher menu:
+./start_apus.sh
+
+# Run the complete 7-stage end-to-end diagnostic & benchmark suite:
+./start_apus.sh --test
+
+# Direct shortcuts:
+./start_apus.sh tui
+./start_apus.sh serve 8080
+./start_apus.sh profiles
+```
+
 ### 1. Clone & Run the Test Suite
 
 ```bash
