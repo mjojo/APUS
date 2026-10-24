@@ -10,5 +10,6 @@ description = "APUS Core: 4KB Page-Aligned Slab Arena, ARC L1/L2 Cache, MLA KV-C
 thiserror.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
+sysinfo.workspace = true
 toml.workspace = true
 tracing.workspace = true

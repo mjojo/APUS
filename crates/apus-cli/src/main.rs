@@ -5,7 +5,7 @@ use apus_backends::{ApusComputeEngine, ComputeAccelerator};
 use apus_core::{
     ApusConfig, ArcCache, CacheTier, ComputeBackend, ConcurrencyStressRunner, ExpertStorage,
     HardwareTopologyScanner, LookAheadPrefetcher, MLA_LATENT_DIM, MlaKvCache, MoEModelPreset,
-    MoERouter, MtpSpeculativeEngine, SlabArena,
+    MoERouter, MtpSpeculativeEngine, SlabArena, detect_system_hardware,
 };
 use apus_io::{
     ApusBlockStorage, ChunkedHubDownloader, IoPriorityClass, OsDriveQosController,
@@ -457,21 +457,47 @@ async fn cmd_bench(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_wizard(cfg_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("╭─── APUS Hardware Wizard [authored by mjojo] ───────────────────────╮");
+    println!("│ Scanning system physical RAM, NUMA topology, and PCIe lanes...     │");
+
     let accel = ComputeAccelerator::detect_host_cpu();
     let topo = HardwareTopologyScanner::probe_host();
     let pinned_core0 = HardwareTopologyScanner::pin_current_thread_to_core(0);
-    println!("[APUS Auto-Tuner Wizard // by mjojo]");
-    println!(" ▸ Detected SIMD / Compute Profile : {}", accel.label());
+    let ram_profile = detect_system_hardware()?;
+
+    println!("├────────────────────────────────────────────────────────────────────┤");
     println!(
-        " ▸ Host CPU / NUMA Topology        : {} cores, {} NUMA node(s), {} CCD(s) (Core0 Pin: {})",
+        "│ Detected Total RAM  : {:>6.1} GB                                    │",
+        ram_profile.total_ram_gb
+    );
+    println!(
+        "│ Available for APUS  : {:>6.1} GB                                    │",
+        ram_profile.available_ram_gb
+    );
+    println!(
+        "│ OS Reserved (QoS)   : {:>6.1} GB (15% Anti-OOM Guard)               │",
+        ram_profile.os_reserved_gb
+    );
+    println!(
+        "│ L2 Slab Cache       : {:>6.1} GB (4KB Pinned RAM / VirtualLock)     │",
+        ram_profile.recommended_l2_slab_gb
+    );
+    println!(
+        "│ CPU / NUMA Topology : {:>2} cores, {} NUMA, {} CCD (Core0 Pin: {:<5})   │",
         topo.logical_cores, topo.estimated_numa_nodes, topo.ccd_chiplets, pinned_core0
     );
-    println!(" ▸ DMA Page Alignment              : 4096 bytes (O_DIRECT / IOCP)");
-    println!(" ▸ System NVMe QoS Protection      : ENABLED (IDLE I/O + 5.5 GB/s Cap + PID 65°C)");
+    println!("│ Compute Accelerator : {:<44} │", accel.label());
+    println!(
+        "│ Recommended Preset  : {:<44} │",
+        ram_profile.recommended_preset
+    );
+    println!("╰────────────────────────────────────────────────────────────────────╯");
 
-    let config = ApusConfig::default();
+    let mut config = ApusConfig::default();
+    config.model.name = ram_profile.recommended_preset.clone();
+    config.memory.ram_slab_gb = (ram_profile.recommended_l2_slab_gb * 10.0).round() / 10.0;
     config.save_to_file(cfg_path)?;
-    println!(" ▸ Configuration written to        : {}", cfg_path);
+    println!("[APUS] Auto-tuned configuration written to '{}'.", cfg_path);
     Ok(())
 }
 

@@ -1,3 +1,4 @@
+pub mod autodetect;
 pub mod cache;
 pub mod config;
 pub mod grammar;
@@ -13,6 +14,7 @@ use std::alloc::{Layout, alloc, dealloc};
 use std::ptr::NonNull;
 use thiserror::Error;
 
+pub use autodetect::{AutoDetectError, HardwareProfile, detect_system_hardware};
 pub use cache::{ArcCache, ArcTelemetry, CacheTier};
 pub use config::ApusConfig;
 pub use grammar::{GrammarConstraintEngine, GrammarMode};
@@ -296,5 +298,11 @@ mod tests {
         logits[17] = 10.0;
         let sampled = sampler.sample(&logits, &[1, 2, 3]);
         assert_eq!(sampled, 17);
+
+        // Verify live RAM auto-detection via sysinfo
+        let hw = detect_system_hardware().expect("sysinfo memory detection failed");
+        assert!(hw.total_ram_gb > 0.0);
+        assert!(hw.recommended_l2_slab_gb >= 8.0);
+        assert!((4.0..=12.0).contains(&hw.os_reserved_gb));
     }
 }

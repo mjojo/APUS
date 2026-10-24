@@ -41,6 +41,7 @@ crossterm = "0.28"
 axum = "0.8"
 memmap2 = "0.9"
 tokio-stream = "0.1"
+sysinfo = "0.33"
 
 # Internal workspace crates
 apus-core = { path = "crates/apus-core" }
